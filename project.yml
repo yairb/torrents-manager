@@ -1,0 +1,97 @@
+name: TorrentApp
+options:
+  bundleIdPrefix: com.yairb.torrentapp
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    ENABLE_HARDENED_RUNTIME: NO
+    ENABLE_APP_SANDBOX: NO
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  TorrentApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+      - path: Resources
+    info:
+      path: Sources/App/Info.plist
+      properties:
+        CFBundleDisplayName: TorrentApp
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        NSHumanReadableCopyright: "Personal project"
+        LSApplicationCategoryType: public.app-category.utilities
+        NSPrincipalClass: NSApplication
+        LSMinimumSystemVersion: "14.0"
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: BitTorrent File
+            CFBundleTypeRole: Viewer
+            LSItemContentTypes:
+              - org.bittorrent.torrent
+            LSHandlerRank: Owner
+        CFBundleURLTypes:
+          - CFBundleURLName: Magnet Link
+            CFBundleURLSchemes:
+              - magnet
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: org.bittorrent.torrent
+            UTTypeDescription: BitTorrent File
+            UTTypeConformsTo:
+              - public.data
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - torrent
+      generateEntitlementsFile: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yairb.torrentapp
+        PRODUCT_NAME: TorrentApp
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridge/TorrentApp-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - /opt/homebrew/opt/libtorrent-rasterbar/include
+          - /opt/homebrew/opt/boost/include
+        LIBRARY_SEARCH_PATHS:
+          - /opt/homebrew/opt/libtorrent-rasterbar/lib
+          - /opt/homebrew/lib
+        LD_RUNPATH_SEARCH_PATHS:
+          - $(inherited)
+          - /opt/homebrew/opt/libtorrent-rasterbar/lib
+          - /opt/homebrew/lib
+        OTHER_LDFLAGS:
+          - -ltorrent-rasterbar
+          - -lssl
+          - -lcrypto
+        CLANG_CXX_LANGUAGE_STANDARD: gnu++17
+        CLANG_ENABLE_OBJC_WEAK: YES
+        GCC_ENABLE_CPP_EXCEPTIONS: YES
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+          - "TORRENT_LINKING_SHARED=1"
+          - "_SILENCE_CXX17_ALLOCATOR_VOID_DEPRECATION_WARNING=1"
+          - "BOOST_ASIO_ENABLE_CANCELIO=1"
+          - "BOOST_ASIO_NO_DEPRECATED=1"
+          - "BOOST_SYSTEM_USE_UTF8=1"
+          - "TORRENT_ABI_VERSION=2"
+          - "TORRENT_USE_OPENSSL=1"
+          - "TORRENT_USE_LIBCRYPTO=1"
+          - "TORRENT_SSL_PEERS=1"
+          - "OPENSSL_NO_SSL2=1"
+          - "OPENSSL_NO_SSL3=1"
+          - "OPENSSL_NO_TLS1=1"
+          - "OPENSSL_NO_TLS1_1=1"
+          - "OPENSSL_NO_DTLS1=1"
+schemes:
+  TorrentApp:
+    build:
+      targets:
+        TorrentApp: all
+    run:
+      config: Debug
