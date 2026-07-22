@@ -49,7 +49,7 @@ struct TagEditorSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Cancel", role: .cancel) { closeColorPanel(); dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Save") { save() }
                     .keyboardShortcut(.defaultAction)
@@ -58,6 +58,14 @@ struct TagEditorSheet: View {
         }
         .padding(24)
         .frame(width: 440)
+    }
+
+    // ColorPicker opens the shared NSColorPanel, which is an independent floating window
+    // that otherwise stays open after this sheet closes.
+    private func closeColorPanel() {
+        if NSColorPanel.shared.isVisible {
+            NSColorPanel.shared.close()
+        }
     }
 
     private func chooseScript() {
@@ -74,6 +82,7 @@ struct TagEditorSheet: View {
         guard !trimmed.isEmpty else { return }
         let tag = Tag(id: existingID ?? UUID(), name: trimmed, colorHex: color.hexString, scriptPath: scriptPath)
         onSave(tag)
+        closeColorPanel()
         dismiss()
     }
 }
