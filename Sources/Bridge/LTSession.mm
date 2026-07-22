@@ -13,6 +13,8 @@
 #include <libtorrent/alert.hpp>
 #include <libtorrent/alert_types.hpp>
 #include <libtorrent/error_code.hpp>
+#include <libtorrent/create_torrent.hpp>
+#include <libtorrent/bencode.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -85,11 +87,15 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
 @end
 
 @implementation LTMetadata
-- (instancetype)initWithName:(NSString *)name totalSize:(int64_t)totalSize files:(NSArray<LTFileInfo *> *)files {
+- (instancetype)initWithName:(NSString *)name
+                    totalSize:(int64_t)totalSize
+                        files:(NSArray<LTFileInfo *> *)files
+               rawTorrentData:(nullable NSData *)rawTorrentData {
     if ((self = [super init])) {
         _name = [name copy];
         _totalSize = totalSize;
         _files = [files copy];
+        _rawTorrentData = [rawTorrentData copy];
     }
     return self;
 }
@@ -298,7 +304,21 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
         [files addObject:[[LTFileInfo alloc] initWithFileIndex:fileIndex path:path size:size]];
     }
     NSString *name = [NSString stringWithUTF8String:ti.name().c_str()];
-    return [[LTMetadata alloc] initWithName:name totalSize:ti.total_size() files:files];
+    NSData *rawTorrentData = [LTSession bencodedTorrentDataForInfo:ti];
+    return [[LTMetadata alloc] initWithName:name totalSize:ti.total_size() files:files rawTorrentData:rawTorrentData];
+}
+
++ (nullable NSData *)bencodedTorrentDataForInfo:(lt::torrent_info const &)ti {
+    try {
+        lt::create_torrent ct(ti);
+        lt::entry e = ct.generate();
+        std::vector<char> buf;
+        lt::bencode(std::back_inserter(buf), e);
+        if (buf.empty()) return nil;
+        return [NSData dataWithBytes:buf.data() length:buf.size()];
+    } catch (std::exception const &) {
+        return nil;
+    }
 }
 
 #pragma mark - Adding torrents

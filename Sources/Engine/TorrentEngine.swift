@@ -54,6 +54,10 @@ struct TorrentMetadata: Sendable {
     let name: String
     let totalSize: Int64
     let files: [TorrentFile]
+    /// Bencoded .torrent-equivalent data, when the engine can reconstruct it. Persisting this
+    /// lets a magnet-originated torrent be fully reattached after an app restart without
+    /// needing metadata from peers again.
+    let rawData: Data?
 }
 
 struct TorrentStatusSnapshot: Sendable {

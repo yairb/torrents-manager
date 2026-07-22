@@ -58,8 +58,10 @@ targets:
         HEADER_SEARCH_PATHS:
           - /opt/homebrew/opt/libtorrent-rasterbar/include
           - /opt/homebrew/opt/boost/include
+          - /opt/homebrew/opt/openssl@3/include
         LIBRARY_SEARCH_PATHS:
           - /opt/homebrew/opt/libtorrent-rasterbar/lib
+          - /opt/homebrew/opt/openssl@3/lib
           - /opt/homebrew/lib
         LD_RUNPATH_SEARCH_PATHS:
           - $(inherited)

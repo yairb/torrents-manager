@@ -18,9 +18,13 @@ struct TorrentRecord: Codable, Sendable, Identifiable {
     var postCompletionAction: PostCompletionAction
     var renameRule: RenameRule?
     var scriptConfig: ScriptConfig?
+    var tagID: UUID?
     var magnetURI: String?
+    /// Bencoded .torrent-equivalent data, when available, so the torrent can be fully
+    /// reattached to the engine on the next launch without needing metadata from peers again.
+    var torrentFileData: Data?
 
-    init(from torrent: Torrent, magnetURI: String? = nil) {
+    init(from torrent: Torrent, magnetURI: String? = nil, torrentFileData: Data? = nil) {
         id = torrent.id
         displayName = torrent.displayName
         originalName = torrent.originalName
@@ -36,15 +40,20 @@ struct TorrentRecord: Codable, Sendable, Identifiable {
         postCompletionAction = torrent.postCompletionAction
         renameRule = torrent.renameRule
         scriptConfig = torrent.scriptConfig
+        tagID = torrent.tagID
         self.magnetURI = magnetURI
+        self.torrentFileData = torrentFileData
     }
 
+    /// Builds a `Torrent` preserving the persisted status as-is. Callers that reattach a
+    /// restored torrent to a live engine handle are responsible for correcting `status`
+    /// afterwards (e.g. falling back to `.failed` if reattachment isn't possible).
     func makeTorrent() -> Torrent {
         Torrent(
             id: id,
             displayName: displayName,
             originalName: originalName,
-            status: status == .completed ? .completed : .failed,
+            status: status,
             progress: progress,
             downloadSpeed: 0,
             uploadSpeed: 0,
@@ -59,6 +68,7 @@ struct TorrentRecord: Codable, Sendable, Identifiable {
             postCompletionAction: postCompletionAction,
             renameRule: renameRule,
             scriptConfig: scriptConfig,
+            tagID: tagID,
             peers: [],
             trackers: []
         )

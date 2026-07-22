@@ -3,6 +3,10 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(SettingsManager.self) private var settingsManager
+    @Environment(TorrentListViewModel.self) private var listViewModel
+
+    @State private var editingTag: Tag?
+    @State private var isPresentingTagEditor = false
 
     var body: some View {
         @Bindable var settingsManager = settingsManager
@@ -34,6 +38,40 @@ struct SettingsView: View {
                 Toggle("Enable Notifications", isOn: $settingsManager.settings.notificationsEnabled)
                 Toggle("Launch at Login", isOn: $settingsManager.settings.launchAtLogin)
             }
+
+            Section("Tags") {
+                if settingsManager.settings.tags.isEmpty {
+                    Text("No tags yet.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(settingsManager.settings.tags) { tag in
+                    HStack {
+                        Circle().fill(tag.color).frame(width: 12, height: 12)
+                        Text(tag.name)
+                        if tag.scriptPath != nil {
+                            Image(systemName: "terminal")
+                                .foregroundStyle(.secondary)
+                                .help("Runs a script on completion")
+                        }
+                        Spacer()
+                        Button("Edit") {
+                            editingTag = tag
+                            isPresentingTagEditor = true
+                        }
+                        .buttonStyle(.borderless)
+                        Button(role: .destructive) {
+                            removeTag(tag)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                Button("Add Tag…") {
+                    editingTag = nil
+                    isPresentingTagEditor = true
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(minWidth: 420, minHeight: 380)
@@ -41,6 +79,24 @@ struct SettingsView: View {
         .onChange(of: settingsManager.settings) {
             settingsManager.save()
         }
+        .sheet(isPresented: $isPresentingTagEditor) {
+            TagEditorSheet(tag: editingTag) { tag in
+                upsertTag(tag)
+            }
+        }
+    }
+
+    private func upsertTag(_ tag: Tag) {
+        if let index = settingsManager.settings.tags.firstIndex(where: { $0.id == tag.id }) {
+            settingsManager.settings.tags[index] = tag
+        } else {
+            settingsManager.settings.tags.append(tag)
+        }
+    }
+
+    private func removeTag(_ tag: Tag) {
+        settingsManager.settings.tags.removeAll { $0.id == tag.id }
+        listViewModel.clearTag(tag.id)
     }
 
     private func chooseDownloadFolder() {

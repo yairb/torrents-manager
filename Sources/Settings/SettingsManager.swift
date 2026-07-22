@@ -36,6 +36,7 @@ final class SettingsManager {
         await downloadManager.updateMaxParallelDownloads(settings.maxParallelDownloads)
         await downloadManager.updateGlobalDownloadLimit(settings.globalDownloadLimitBytesPerSec)
         await downloadManager.updateGlobalUploadLimit(settings.globalUploadLimitBytesPerSec)
+        await downloadManager.updateTags(settings.tags)
         try? applyLoginItem(enabled: settings.launchAtLogin)
     }
 

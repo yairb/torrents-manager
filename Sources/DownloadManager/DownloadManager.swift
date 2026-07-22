@@ -5,8 +5,11 @@ actor DownloadManager {
     private let persistenceStore: any PersistenceStore
     private var torrents: [TorrentHandleID: Torrent] = [:]
     private var magnetURIs: [TorrentHandleID: String] = [:]
+    private var torrentFileBlobs: [TorrentHandleID: Data] = [:]
     private var queuedIDs: Set<TorrentHandleID> = []
+    private var pausedIDs: Set<TorrentHandleID> = []
     private var maxParallelDownloads: Int
+    private var tags: [Tag] = []
     private var eventConsumerTask: Task<Void, Never>?
 
     private let continuation: AsyncStream<[Torrent]>.Continuation
@@ -30,10 +33,68 @@ actor DownloadManager {
             }
         }
         for record in await persistenceStore.fetchAllTorrents() {
-            torrents[record.id] = record.makeTorrent()
-            magnetURIs[record.id] = record.magnetURI
+            await reattach(record)
         }
+        promoteQueuedTorrentsIfNeeded()
         publish()
+    }
+
+    /// Restores a persisted torrent across an app restart. Torrents that were still active
+    /// (downloading, paused, queued, checking, seeding) need a live engine handle again —
+    /// re-adding via the stored magnet URI or raw torrent data reuses the same info-hash-derived
+    /// ID, so it reattaches to whatever data libtorrent finds on disk rather than starting over.
+    /// Torrents with no way to reconstruct their metadata (or that fail to re-add) fall back to
+    /// `.failed` since there's nothing left to resume.
+    private func reattach(_ record: TorrentRecord) async {
+        guard record.status != .completed, record.status != .failed else {
+            torrents[record.id] = record.makeTorrent()
+            return
+        }
+
+        let destination = URL(fileURLWithPath: record.destinationDirectory)
+        let shouldStartPaused = record.status == .paused || record.status == .queued
+        let options = AddTorrentOptions(destinationDirectory: destination, startPaused: shouldStartPaused)
+
+        do {
+            let id: TorrentHandleID
+            if let fileData = record.torrentFileData {
+                id = try await engine.addTorrent(fileData: fileData, options: options)
+            } else if let magnetURI = record.magnetURI {
+                id = try await engine.addTorrent(magnetURI: magnetURI, options: options)
+            } else {
+                var torrent = record.makeTorrent()
+                torrent.status = .failed
+                torrents[record.id] = torrent
+                return
+            }
+
+            if id != record.id {
+                Task { await persistenceStore.deleteTorrent(record.id) }
+            }
+
+            var reattachedRecord = record
+            reattachedRecord.id = id
+            var torrent = reattachedRecord.makeTorrent()
+            switch record.status {
+            case .queued:
+                torrent.status = .queued
+                queuedIDs.insert(id)
+            case .paused:
+                torrent.status = .paused
+                pausedIDs.insert(id)
+            default:
+                torrent.status = record.status
+            }
+
+            torrents[id] = torrent
+            magnetURIs[id] = record.magnetURI
+            if let fileData = record.torrentFileData { torrentFileBlobs[id] = fileData }
+            persistTorrent(id)
+        } catch {
+            var torrent = record.makeTorrent()
+            torrent.status = .failed
+            torrents[record.id] = torrent
+        }
     }
 
     func shutdown() async {
@@ -81,6 +142,7 @@ actor DownloadManager {
     func pause(_ id: TorrentHandleID) async throws {
         try await engine.pause(id)
         queuedIDs.remove(id)
+        pausedIDs.insert(id)
         torrents[id]?.status = .paused
         persistTorrent(id)
         promoteQueuedTorrentsIfNeeded()
@@ -90,16 +152,25 @@ actor DownloadManager {
     func resume(_ id: TorrentHandleID) async throws {
         try await engine.resume(id)
         queuedIDs.remove(id)
+        pausedIDs.remove(id)
         torrents[id]?.status = .downloading
         persistTorrent(id)
         publish()
     }
 
     func remove(_ id: TorrentHandleID, deleteFiles: Bool) async throws {
-        try await engine.remove(id, deleteFiles: deleteFiles)
+        do {
+            try await engine.remove(id, deleteFiles: deleteFiles)
+        } catch EngineError.torrentNotFound {
+            // Torrents persisted as terminal (failed/completed) before a fix, or that
+            // otherwise never got a live engine handle, have nothing to remove from the
+            // engine — fall through and just clean up local/persisted state.
+        }
         torrents.removeValue(forKey: id)
         magnetURIs.removeValue(forKey: id)
+        torrentFileBlobs.removeValue(forKey: id)
         queuedIDs.remove(id)
+        pausedIDs.remove(id)
         Task { await persistenceStore.deleteTorrent(id) }
         promoteQueuedTorrentsIfNeeded()
         publish()
@@ -132,6 +203,25 @@ actor DownloadManager {
         publish()
     }
 
+    func setTag(_ id: TorrentHandleID, tagID: UUID?) {
+        torrents[id]?.tagID = tagID
+        persistTorrent(id)
+        publish()
+    }
+
+    /// Clears a tag from any torrent that still references it, e.g. after the tag itself was deleted.
+    func clearTag(_ tagID: UUID) {
+        for id in torrents.keys where torrents[id]?.tagID == tagID {
+            torrents[id]?.tagID = nil
+            persistTorrent(id)
+        }
+        publish()
+    }
+
+    func updateTags(_ tags: [Tag]) {
+        self.tags = tags
+    }
+
     func updateMaxParallelDownloads(_ count: Int) async {
         maxParallelDownloads = count
         await engine.setMaxActiveDownloads(count)
@@ -155,10 +245,13 @@ actor DownloadManager {
             torrent.displayName = torrent.renameRule?.finalName ?? metadata.name
             torrent.totalSize = metadata.totalSize
             torrent.files = metadata.files
-            if !queuedIDs.contains(id) {
+            if !queuedIDs.contains(id) && !pausedIDs.contains(id) {
                 torrent.status = .downloading
             }
             torrents[id] = torrent
+            if let rawData = metadata.rawData {
+                torrentFileBlobs[id] = rawData
+            }
             persistTorrent(id)
 
         case .statusUpdate(let id, let snapshot):
@@ -179,6 +272,7 @@ actor DownloadManager {
             torrents[id]?.completedAt = Date()
             persistTorrent(id)
             promoteQueuedTorrentsIfNeeded()
+            runCompletionScriptIfNeeded(for: id)
 
         case .torrentError(let id, _):
             torrents[id]?.status = .failed
@@ -219,9 +313,24 @@ actor DownloadManager {
         }
     }
 
+    private func runCompletionScriptIfNeeded(for id: TorrentHandleID) {
+        guard let torrent = torrents[id],
+              let tagID = torrent.tagID,
+              let tag = tags.first(where: { $0.id == tagID }),
+              let scriptPath = tag.scriptPath else { return }
+        ScriptRunner.runCompletionScript(
+            scriptPath: scriptPath,
+            torrentName: torrent.displayName,
+            torrentHash: torrent.id,
+            destinationPath: torrent.destinationDirectory.path,
+            totalSize: torrent.totalSize,
+            tagName: tag.name
+        )
+    }
+
     private func persistTorrent(_ id: TorrentHandleID) {
         guard let torrent = torrents[id] else { return }
-        let record = TorrentRecord(from: torrent, magnetURI: magnetURIs[id])
+        let record = TorrentRecord(from: torrent, magnetURI: magnetURIs[id], torrentFileData: torrentFileBlobs[id])
         let store = persistenceStore
         Task { await store.saveTorrent(record) }
     }

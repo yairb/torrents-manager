@@ -27,6 +27,10 @@ typedef NS_ENUM(NSInteger, LTTorrentStatus) {
 @property (nonatomic, readonly, copy) NSString *name;
 @property (nonatomic, readonly) int64_t totalSize;
 @property (nonatomic, readonly, copy) NSArray<LTFileInfo *> *files;
+/// Bencoded .torrent-equivalent data reconstructed from the handle's parsed metadata.
+/// Lets the app persist a torrent it only ever saw as a magnet link, so it can be fully
+/// reattached (no network round-trip for metadata) after the app restarts.
+@property (nonatomic, readonly, nullable) NSData *rawTorrentData;
 @end
 
 @interface LTStatusSnapshot : NSObject

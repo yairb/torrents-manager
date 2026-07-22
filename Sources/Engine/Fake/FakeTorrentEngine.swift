@@ -61,7 +61,7 @@ actor FakeTorrentEngine: TorrentEngine {
             TorrentFile(index: index, path: "\(name)/file\(index).bin",
                         size: totalSize / Int64(fileCount), downloadedBytes: 0, priority: .normal)
         }
-        let metadata = TorrentMetadata(name: name, totalSize: totalSize, files: files)
+        let metadata = TorrentMetadata(name: name, totalSize: totalSize, files: files, rawData: nil)
         torrents[id] = SimState(metadata: metadata, isPaused: options.startPaused)
 
         // Simulate the brief metadata-fetch delay a real magnet link has.

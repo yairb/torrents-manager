@@ -5,6 +5,13 @@ struct TorrentRowView: View {
     var isSelected: Bool = false
     var onShowDetails: (() -> Void)?
 
+    @Environment(SettingsManager.self) private var settingsManager
+
+    private var tag: Tag? {
+        guard let tagID = torrent.tagID else { return nil }
+        return settingsManager.settings.tags.first { $0.id == tagID }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -12,6 +19,9 @@ struct TorrentRowView: View {
                     .font(.headline)
                     .lineLimit(1)
                 Spacer()
+                if let tag {
+                    TagBadge(tag: tag)
+                }
                 StatusBadge(status: torrent.status)
                 if let onShowDetails {
                     Button(action: onShowDetails) {

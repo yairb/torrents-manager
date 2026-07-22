@@ -21,6 +21,7 @@ struct Torrent: Identifiable, Sendable, Equatable {
     var postCompletionAction: PostCompletionAction
     var renameRule: RenameRule?
     var scriptConfig: ScriptConfig?
+    var tagID: UUID?
     var peers: [PeerInfo]
     var trackers: [TrackerInfo]
 }
@@ -104,6 +105,7 @@ extension Torrent {
             postCompletionAction: .none,
             renameRule: nil,
             scriptConfig: nil,
+            tagID: nil,
             peers: [],
             trackers: []
         )

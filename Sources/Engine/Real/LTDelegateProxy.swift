@@ -17,7 +17,7 @@ final class LTDelegateProxy: NSObject, LTSessionDelegate {
         let files = metadata.files.map { file in
             TorrentFile(index: file.fileIndex, path: file.path, size: file.size, downloadedBytes: 0, priority: .normal)
         }
-        let torrentMetadata = TorrentMetadata(name: metadata.name, totalSize: metadata.totalSize, files: files)
+        let torrentMetadata = TorrentMetadata(name: metadata.name, totalSize: metadata.totalSize, files: files, rawData: metadata.rawTorrentData)
         continuation.yield(.metadataReceived(handleID, torrentMetadata))
     }
 

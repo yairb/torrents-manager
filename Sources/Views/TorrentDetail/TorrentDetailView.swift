@@ -167,6 +167,7 @@ private struct LogsTab: View {
 private struct TorrentSettingsTab: View {
     let torrent: Torrent
     @Environment(TorrentListViewModel.self) private var viewModel
+    @Environment(SettingsManager.self) private var settingsManager
     @State private var renameText = ""
 
     var body: some View {
@@ -207,6 +208,23 @@ private struct TorrentSettingsTab: View {
                         .truncationMode(.middle)
                     Spacer()
                     Button("Move…") { chooseDestination() }
+                }
+            }
+
+            Section("Tag") {
+                Picker("Tag", selection: Binding(
+                    get: { torrent.tagID },
+                    set: { viewModel.setTag(torrent, tagID: $0) }
+                )) {
+                    Text("None").tag(UUID?.none)
+                    ForEach(settingsManager.settings.tags) { tag in
+                        Label {
+                            Text(tag.name)
+                        } icon: {
+                            Circle().fill(tag.color).frame(width: 10, height: 10)
+                        }
+                        .tag(Optional(tag.id))
+                    }
                 }
             }
         }

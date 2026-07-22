@@ -74,4 +74,12 @@ final class TorrentListViewModel {
             catch { errorMessage = error.localizedDescription }
         }
     }
+
+    func setTag(_ torrent: Torrent, tagID: UUID?) {
+        Task { await downloadManager.setTag(torrent.id, tagID: tagID) }
+    }
+
+    func clearTag(_ tagID: UUID) {
+        Task { await downloadManager.clearTag(tagID) }
+    }
 }
