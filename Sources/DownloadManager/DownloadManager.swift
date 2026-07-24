@@ -320,7 +320,10 @@ actor DownloadManager {
               let scriptPath = tag.scriptPath else { return }
         ScriptRunner.runCompletionScript(
             scriptPath: scriptPath,
-            torrentName: torrent.displayName,
+            // Rename rules only relabel `displayName` in the UI/persistence — they're never
+            // propagated to the engine, so the file/folder on disk is still named per
+            // `originalName`. Scripts need the real on-disk name to find the content.
+            torrentName: torrent.originalName,
             torrentHash: torrent.id,
             destinationPath: torrent.destinationDirectory.path,
             totalSize: torrent.totalSize,
