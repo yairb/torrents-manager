@@ -314,10 +314,13 @@ actor DownloadManager {
     }
 
     private func runCompletionScriptIfNeeded(for id: TorrentHandleID) {
-        guard let torrent = torrents[id],
-              let tagID = torrent.tagID,
-              let tag = tags.first(where: { $0.id == tagID }),
-              let scriptPath = tag.scriptPath else { return }
+        guard let torrent = torrents[id] else { return }
+        guard let tagID = torrent.tagID else { return }
+        guard let tag = tags.first(where: { $0.id == tagID }) else {
+            NSLog("TorrentApp: torrent '\(torrent.originalName)' finished but its assigned tag no longer exists — skipping completion script")
+            return
+        }
+        guard let scriptPath = tag.scriptPath else { return }
         ScriptRunner.runCompletionScript(
             scriptPath: scriptPath,
             // Rename rules only relabel `displayName` in the UI/persistence — they're never
