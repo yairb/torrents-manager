@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -26,7 +27,7 @@ final class AddTorrentViewModel {
         // both fire on Return, which would otherwise add the same magnet twice.
         guard !isSubmitting else { return }
         let uri = magnetURIInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard uri.hasPrefix("magnet:?") else {
+        guard uri.hasPrefix("magnet:") else {
             errorMessage = "That doesn't look like a valid magnet link."
             return
         }
@@ -51,10 +52,33 @@ final class AddTorrentViewModel {
     }
 
     func handleDroppedMagnetLinks(_ links: [String]) {
+        addMagnets(links)
+    }
+
+    /// Adds every magnet URI in `uris` to the default download directory. Non-magnet entries are
+    /// ignored, so callers can pass raw text without pre-filtering.
+    func addMagnets(_ uris: [String]) {
         let destination = defaultDestination
-        for link in links where link.hasPrefix("magnet:?") {
-            Task { try? await downloadManager.addTorrent(magnetURI: link, destination: destination) }
+        for uri in Self.magnets(in: uris) {
+            Task { try? await downloadManager.addTorrent(magnetURI: uri, destination: destination) }
         }
+    }
+
+    /// Adds any magnet links found on the general pasteboard. Returns `false` when the clipboard
+    /// holds nothing usable, so a keyboard-shortcut caller can fall back to a normal paste.
+    @discardableResult
+    func addMagnetsFromClipboard() -> Bool {
+        guard let text = NSPasteboard.general.string(forType: .string) else { return false }
+        let uris = Self.magnets(in: text.components(separatedBy: .newlines))
+        guard !uris.isEmpty else { return false }
+        addMagnets(uris)
+        return true
+    }
+
+    private static func magnets(in candidates: [String]) -> [String] {
+        candidates
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.hasPrefix("magnet:") }
     }
 
     func submitTorrentFile(at url: URL) {

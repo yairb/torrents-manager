@@ -16,6 +16,8 @@
 #include <libtorrent/create_torrent.hpp>
 #include <libtorrent/bencode.hpp>
 
+#include <pthread/qos.h>
+
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -152,12 +154,17 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     lt::settings_pack pack;
     pack.set_str(lt::settings_pack::listen_interfaces, "0.0.0.0:6881,[::]:6881");
     pack.set_bool(lt::settings_pack::enable_dht, true);
+    // Deliberately NOT subscribing to alert_category::piece_progress: it posts
+    // block_downloading/block_finished/piece_finished alerts at roughly one per 16 KiB block,
+    // i.e. hundreds to thousands per second at any real download rate. `handleAlert:` ignores
+    // every one of them, but their sheer volume made wait_for_alert() return instantly on every
+    // iteration, turning the alert loop into a busy spin (see -runAlertLoop). file_progress is
+    // kept because file_completed_alert is genuinely consumed and is low-volume.
     pack.set_int(lt::settings_pack::alert_mask,
                  lt::alert_category::status
                  | lt::alert_category::error
                  | lt::alert_category::storage
-                 | lt::alert_category::file_progress
-                 | lt::alert_category::piece_progress);
+                 | lt::alert_category::file_progress);
 
     lt::session_params params(std::move(pack));
 
@@ -171,6 +178,10 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     _running.store(true);
     __weak LTSession *weakSelf = self;
     _alertThread = std::thread([weakSelf] {
+        // A raw std::thread inherits whatever QoS the spawning context had, which leaves it
+        // liable to being demoted (and throttled harder under App Nap) while the app is in the
+        // background. This thread drives every status update the UI sees, so pin it explicitly.
+        pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
         LTSession *strongSelf = weakSelf;
         if (!strongSelf) return;
         [strongSelf runAlertLoop];
@@ -195,11 +206,30 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     _session.reset();
 }
 
+/// Pumps libtorrent's alert queue and asks for a status refresh once a second.
+///
+/// The status cadence is driven by an explicit clock rather than by the loop's own iteration
+/// rate: `wait_for_alert` returns immediately whenever anything is already queued, so posting
+/// once per iteration meant post_torrent_updates() fired as fast as alerts arrived — far above
+/// the ~1 Hz libtorrent documents, and enough to swamp every layer above this one.
 - (void)runAlertLoop {
+    constexpr auto kStatusInterval = std::chrono::seconds(1);
+    constexpr auto kAlertWait = std::chrono::milliseconds(200);
+
+    // steady_clock::time_point{} is far enough in the past to force a post on the first pass.
+    std::chrono::steady_clock::time_point lastStatusPost{};
+
     while (_running.load()) {
         if (!_session) break;
-        _session->post_torrent_updates();
-        lt::alert *a = _session->wait_for_alert(std::chrono::seconds(1));
+
+        auto const now = std::chrono::steady_clock::now();
+        if (now - lastStatusPost >= kStatusInterval) {
+            _session->post_torrent_updates();
+            lastStatusPost = now;
+        }
+
+        // Short wait so both the cadence check above and -shutdown's wake-up stay responsive.
+        lt::alert *a = _session->wait_for_alert(kAlertWait);
         if (!a) continue;
 
         std::vector<lt::alert *> alerts;
@@ -212,6 +242,10 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
 
 #pragma mark - Alert handling
 
+/// Called on the alert thread. Delegate callbacks are made directly from here rather than
+/// hopped onto the main queue: the delegate only forwards into a thread-safe AsyncStream
+/// continuation, and funnelling every status update through the main queue was enough to
+/// starve the UI of the very thread it needs to draw.
 - (void)handleAlert:(lt::alert *)a {
     if (auto *su = lt::alert_cast<lt::state_update_alert>(a)) {
         for (lt::torrent_status const &st : su->status) {
@@ -224,10 +258,7 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
         NSString *handleID = handleIDForInfoHashes(md->handle.info_hashes());
         LTMetadata *metadata = [self metadataForHandle:md->handle];
         if (metadata) {
-            id<LTSessionDelegate> delegate = self.delegate;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [delegate session:self handleID:handleID didReceiveMetadata:metadata];
-            });
+            [self.delegate session:self handleID:handleID didReceiveMetadata:metadata];
         }
         return;
     }
@@ -235,29 +266,20 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     if (auto *fc = lt::alert_cast<lt::file_completed_alert>(a)) {
         NSString *handleID = handleIDForInfoHashes(fc->handle.info_hashes());
         NSInteger fileIndex = static_cast<NSInteger>(static_cast<int>(fc->index));
-        id<LTSessionDelegate> delegate = self.delegate;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [delegate session:self handleID:handleID didCompleteFileAtIndex:fileIndex];
-        });
+        [self.delegate session:self handleID:handleID didCompleteFileAtIndex:fileIndex];
         return;
     }
 
     if (auto *tf = lt::alert_cast<lt::torrent_finished_alert>(a)) {
         NSString *handleID = handleIDForInfoHashes(tf->handle.info_hashes());
-        id<LTSessionDelegate> delegate = self.delegate;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [delegate session:self didCompleteTorrentWithHandleID:handleID];
-        });
+        [self.delegate session:self didCompleteTorrentWithHandleID:handleID];
         return;
     }
 
     if (auto *te = lt::alert_cast<lt::torrent_error_alert>(a)) {
         NSString *handleID = handleIDForInfoHashes(te->handle.info_hashes());
         NSString *message = [NSString stringWithUTF8String:te->error.message().c_str()];
-        id<LTSessionDelegate> delegate = self.delegate;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [delegate session:self handleID:handleID didFailWithErrorMessage:message];
-        });
+        [self.delegate session:self handleID:handleID didFailWithErrorMessage:message];
         return;
     }
 }
@@ -282,10 +304,7 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
                                                            downloadedBytes:st.total_wanted_done
                                                                 etaSeconds:eta];
 
-    id<LTSessionDelegate> delegate = self.delegate;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [delegate session:self handleID:handleID didUpdateStatus:snapshot];
-    });
+    [self.delegate session:self handleID:handleID didUpdateStatus:snapshot];
 }
 
 - (nullable LTMetadata *)metadataForHandle:(lt::torrent_handle const &)handle {
@@ -389,9 +408,14 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     // never posts a metadata_received_alert for it (that alert only fires once metadata is
     // fetched from peers). Emit the equivalent callback ourselves so the UI doesn't stay
     // stuck on its initial "fetching metadata" placeholder forever.
+    //
+    // This one callback must stay asynchronous, unlike the alert-thread ones. It fires from
+    // inside this method, on the caller's thread; delivering it synchronously would let the
+    // metadata event be processed before the caller has finished registering the torrent, and
+    // the handler drops metadata for an unknown ID — stranding the row on "Fetching metadata…".
     LTMetadata *metadata = [self metadataForTorrentInfo:*ti];
     id<LTSessionDelegate> delegate = self.delegate;
-    dispatch_async(dispatch_get_main_queue(), ^{
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         [delegate session:self handleID:handleID didReceiveMetadata:metadata];
     });
 

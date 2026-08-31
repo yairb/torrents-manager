@@ -36,6 +36,7 @@ struct SettingsView: View {
 
             Section("General") {
                 Toggle("Enable Notifications", isOn: $settingsManager.settings.notificationsEnabled)
+                Toggle("Play Sound When a Download Completes", isOn: $settingsManager.settings.completionSoundEnabled)
                 Toggle("Launch at Login", isOn: $settingsManager.settings.launchAtLogin)
             }
 

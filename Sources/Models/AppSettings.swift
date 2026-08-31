@@ -6,6 +6,7 @@ struct AppSettings: Sendable, Codable, Equatable {
     var globalDownloadLimitBytesPerSec: Int?
     var globalUploadLimitBytesPerSec: Int?
     var notificationsEnabled: Bool
+    var completionSoundEnabled: Bool
     var launchAtLogin: Bool
     var tags: [Tag]
 
@@ -15,6 +16,7 @@ struct AppSettings: Sendable, Codable, Equatable {
         globalDownloadLimitBytesPerSec: Int?,
         globalUploadLimitBytesPerSec: Int?,
         notificationsEnabled: Bool,
+        completionSoundEnabled: Bool = true,
         launchAtLogin: Bool,
         tags: [Tag] = []
     ) {
@@ -23,17 +25,19 @@ struct AppSettings: Sendable, Codable, Equatable {
         self.globalDownloadLimitBytesPerSec = globalDownloadLimitBytesPerSec
         self.globalUploadLimitBytesPerSec = globalUploadLimitBytesPerSec
         self.notificationsEnabled = notificationsEnabled
+        self.completionSoundEnabled = completionSoundEnabled
         self.launchAtLogin = launchAtLogin
         self.tags = tags
     }
 
     enum CodingKeys: String, CodingKey {
         case defaultDownloadDirectory, maxParallelDownloads, globalDownloadLimitBytesPerSec
-        case globalUploadLimitBytesPerSec, notificationsEnabled, launchAtLogin, tags
+        case globalUploadLimitBytesPerSec, notificationsEnabled, completionSoundEnabled
+        case launchAtLogin, tags
     }
 
-    // Custom decoding so settings.json files saved before the Tags feature existed
-    // (which lack a "tags" key) still decode successfully instead of falling back to `.default`.
+    // Custom decoding so settings.json files saved before a later feature existed (and so lack
+    // its key) still decode successfully instead of falling back to `.default`.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         defaultDownloadDirectory = try container.decode(URL.self, forKey: .defaultDownloadDirectory)
@@ -41,6 +45,7 @@ struct AppSettings: Sendable, Codable, Equatable {
         globalDownloadLimitBytesPerSec = try container.decodeIfPresent(Int.self, forKey: .globalDownloadLimitBytesPerSec)
         globalUploadLimitBytesPerSec = try container.decodeIfPresent(Int.self, forKey: .globalUploadLimitBytesPerSec)
         notificationsEnabled = try container.decode(Bool.self, forKey: .notificationsEnabled)
+        completionSoundEnabled = try container.decodeIfPresent(Bool.self, forKey: .completionSoundEnabled) ?? true
         launchAtLogin = try container.decode(Bool.self, forKey: .launchAtLogin)
         tags = try container.decodeIfPresent([Tag].self, forKey: .tags) ?? []
     }
@@ -54,6 +59,7 @@ struct AppSettings: Sendable, Codable, Equatable {
             globalDownloadLimitBytesPerSec: nil,
             globalUploadLimitBytesPerSec: nil,
             notificationsEnabled: true,
+            completionSoundEnabled: true,
             launchAtLogin: false,
             tags: []
         )

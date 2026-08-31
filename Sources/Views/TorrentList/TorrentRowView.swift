@@ -64,17 +64,29 @@ struct TorrentRowView: View {
         )
     }
 
-    private func formatSpeed(_ bytesPerSecond: Int64) -> String {
-        guard bytesPerSecond > 0 else { return "—" }
-        return ByteCountFormatter.string(fromByteCount: bytesPerSecond, countStyle: .binary) + "/s"
-    }
-
-    private func formatETA(_ seconds: TimeInterval) -> String {
+    // Formatters are comparatively expensive to build; these were being allocated fresh on every
+    // body evaluation of every visible row, several times a second.
+    private static let etaFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.hour, .minute, .second]
         formatter.unitsStyle = .abbreviated
         formatter.maximumUnitCount = 2
-        return formatter.string(from: seconds) ?? "—"
+        return formatter
+    }()
+
+    private static let speedFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .binary
+        return formatter
+    }()
+
+    private func formatSpeed(_ bytesPerSecond: Int64) -> String {
+        guard bytesPerSecond > 0 else { return "—" }
+        return Self.speedFormatter.string(fromByteCount: bytesPerSecond) + "/s"
+    }
+
+    private func formatETA(_ seconds: TimeInterval) -> String {
+        Self.etaFormatter.string(from: seconds) ?? "—"
     }
 }
 

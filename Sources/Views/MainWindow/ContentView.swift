@@ -37,7 +37,6 @@ struct ContentView: View {
                 } label: {
                     Label("Add Magnet", systemImage: "plus")
                 }
-                .keyboardShortcut("n", modifiers: .command)
             }
         }
         .sheet(isPresented: $addTorrentViewModel.isShowingAddMagnetSheet) {

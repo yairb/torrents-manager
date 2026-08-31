@@ -45,6 +45,10 @@ typedef NS_ENUM(NSInteger, LTTorrentStatus) {
 
 @class LTSession;
 
+/// All callbacks are delivered on an internal background thread, never the main thread.
+/// Implementations must be safe to call from an arbitrary thread and must not block — this
+/// thread is the one pumping libtorrent's alert queue. Hop to the main thread yourself if you
+/// need to touch UI state.
 @protocol LTSessionDelegate <NSObject>
 - (void)session:(LTSession *)session handleID:(NSString *)handleID didReceiveMetadata:(LTMetadata *)metadata
     NS_SWIFT_NAME(session(_:handleID:didReceiveMetadata:));

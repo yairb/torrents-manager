@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -38,6 +39,15 @@ struct TorrentAppMain: App {
                     try? await downloadManager.start()
                     await listViewModel.startObserving()
                 }
+                .onOpenURL { url in
+                    // Info.plist claims the `magnet` scheme and the `.torrent` file type; without
+                    // this, clicking a magnet in a browser just foregrounds the app and does nothing.
+                    if url.scheme?.lowercased() == "magnet" {
+                        addTorrentViewModel.addMagnets([url.absoluteString])
+                    } else if url.isFileURL, url.pathExtension.lowercased() == "torrent" {
+                        addTorrentViewModel.submitTorrentFile(at: url)
+                    }
+                }
         }
         .windowToolbarStyle(.unified)
         .commands {
@@ -47,6 +57,35 @@ struct TorrentAppMain: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
             }
+            // The whole group is replaced rather than adding a ⌘V button alongside it: a second
+            // ⌘V binding would shadow the standard one and break pasting into every text field in
+            // the app. Cut/Copy/Select All are re-provided verbatim by forwarding to the responder
+            // chain, exactly as the stock items do.
+            CommandGroup(replacing: .pasteboard) {
+                Button("Cut") { NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("x", modifiers: .command)
+                Button("Copy") { NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("c", modifiers: .command)
+                Button("Paste") { paste() }
+                    .keyboardShortcut("v", modifiers: .command)
+                Divider()
+                Button("Select All") { NSApp.sendAction(#selector(NSResponder.selectAll(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("a", modifiers: .command)
+            }
         }
+    }
+
+    /// ⌘V adds the clipboard's magnet links — unless a text field has focus, in which case it must
+    /// behave like an ordinary paste.
+    @MainActor
+    private func paste() {
+        // A SwiftUI TextField resolves to the window's field editor (an NSTextView) while editing.
+        let isEditingText = NSApp.keyWindow?.firstResponder is NSTextView
+        if !isEditingText, addTorrentViewModel.addMagnetsFromClipboard() {
+            return
+        }
+        // Nothing magnet-shaped on the clipboard (or a field is focused): forward it along so the
+        // paste is never silently swallowed.
+        NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
     }
 }

@@ -5,7 +5,9 @@ import Foundation
 /// This can't just be `RealTorrentEngine` itself: `LTSession.delegate` is a plain
 /// `id<LTSessionDelegate>`, which requires an actual NSObject-rooted class, and Swift
 /// actors don't inherit from NSObject. The proxy only forwards into the (thread-safe,
-/// Sendable) AsyncStream continuation, so no actor-isolated state is touched here.
+/// Sendable) AsyncStream continuation, so no actor-isolated state is touched here — which is
+/// also what lets `LTSession` invoke these callbacks straight from its alert thread rather
+/// than hopping each one through the main queue.
 final class LTDelegateProxy: NSObject, LTSessionDelegate {
     private let continuation: AsyncStream<TorrentEngineEvent>.Continuation
 

@@ -11,6 +11,8 @@ actor DownloadManager {
     private var maxParallelDownloads: Int
     private var tags: [Tag] = []
     private var eventConsumerTask: Task<Void, Never>?
+    private var pendingPublishTask: Task<Void, Never>?
+    private var completionSoundEnabled = true
 
     private let continuation: AsyncStream<[Torrent]>.Continuation
     nonisolated let snapshots: AsyncStream<[Torrent]>
@@ -20,7 +22,11 @@ actor DownloadManager {
         self.persistenceStore = persistenceStore
         self.maxParallelDownloads = maxParallelDownloads
         var cont: AsyncStream<[Torrent]>.Continuation!
-        self.snapshots = AsyncStream { cont = $0 }
+        // Only the newest snapshot is ever of interest — each one carries complete state, so an
+        // older one is pure waste. Bounding to 1 coalesces redundant frames structurally (no
+        // timer needed) and makes it impossible for a slow consumer to accumulate a backlog and
+        // render state from seconds ago.
+        self.snapshots = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { cont = $0 }
         self.continuation = cont
     }
 
@@ -99,6 +105,7 @@ actor DownloadManager {
 
     func shutdown() async {
         eventConsumerTask?.cancel()
+        pendingPublishTask?.cancel()
         await engine.shutdown()
     }
 
@@ -229,6 +236,10 @@ actor DownloadManager {
         publish()
     }
 
+    func updateCompletionSoundEnabled(_ enabled: Bool) {
+        completionSoundEnabled = enabled
+    }
+
     func updateGlobalDownloadLimit(_ bytesPerSecond: Int?) async {
         await engine.setGlobalDownloadLimit(bytesPerSecond: bytesPerSecond)
     }
@@ -268,11 +279,21 @@ actor DownloadManager {
             torrents[id] = torrent
 
         case .torrentCompleted(let id):
+            // `reattach` re-adds anything that isn't already terminal, including seeding
+            // torrents. libtorrent rechecks those against what's on disk, finds them complete,
+            // and posts torrent_finished_alert again — so without this guard every seeding
+            // torrent would ding and re-run its completion script on every app launch.
+            let wasAlreadyFinished = torrents[id]?.status == .completed || torrents[id]?.status == .seeding
             torrents[id]?.status = .completed
             torrents[id]?.completedAt = Date()
             persistTorrent(id)
             promoteQueuedTorrentsIfNeeded()
-            runCompletionScriptIfNeeded(for: id)
+            if !wasAlreadyFinished {
+                if completionSoundEnabled {
+                    Task { @MainActor in CompletionSound.play() }
+                }
+                runCompletionScriptIfNeeded(for: id)
+            }
 
         case .torrentError(let id, _):
             torrents[id]?.status = .failed
@@ -285,7 +306,7 @@ actor DownloadManager {
         case .trackerListUpdate(let id, let trackers):
             torrents[id]?.trackers = trackers
         }
-        publish()
+        publishSoon()
     }
 
     private func activeCount() -> Int {
@@ -341,7 +362,26 @@ actor DownloadManager {
         Task { await store.saveTorrent(record) }
     }
 
+    /// Coalesces engine-driven publishes. A single `state_update_alert` fans out into one event
+    /// per torrent, so publishing on each of them meant N full sorts and N snapshots for what is
+    /// really one update. User actions still call `publish()` directly — those must be immediate.
+    private func publishSoon() {
+        guard pendingPublishTask == nil else { return }
+        pendingPublishTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+            await self?.flushPendingPublish()
+        }
+    }
+
+    private func flushPendingPublish() {
+        pendingPublishTask = nil
+        publish()
+    }
+
     private func publish() {
+        pendingPublishTask?.cancel()
+        pendingPublishTask = nil
         continuation.yield(Array(torrents.values).sorted { $0.addedAt > $1.addedAt })
     }
 }
