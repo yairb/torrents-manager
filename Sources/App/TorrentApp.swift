@@ -8,6 +8,7 @@ struct TorrentAppMain: App {
     @State private var listViewModel: TorrentListViewModel
     @State private var addTorrentViewModel: AddTorrentViewModel
     @State private var settingsManager: SettingsManager
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     private let downloadManager: DownloadManager
 
@@ -38,15 +39,10 @@ struct TorrentAppMain: App {
                     await settingsManager.reload()
                     try? await downloadManager.start()
                     await listViewModel.startObserving()
-                }
-                .onOpenURL { url in
-                    // Info.plist claims the `magnet` scheme and the `.torrent` file type; without
-                    // this, clicking a magnet in a browser just foregrounds the app and does nothing.
-                    if url.scheme?.lowercased() == "magnet" {
-                        addTorrentViewModel.addMagnets([url.absoluteString])
-                    } else if url.isFileURL, url.pathExtension.lowercased() == "torrent" {
-                        addTorrentViewModel.submitTorrentFile(at: url)
-                    }
+                    // Only now is it safe to add torrents — before this the engine isn't running
+                    // and the default download directory hasn't been loaded. Any magnet that
+                    // launched the app has been buffered by the delegate and drains here.
+                    appDelegate.setHandler { urls in handleOpenedURLs(urls) }
                 }
         }
         .windowToolbarStyle(.unified)
@@ -72,6 +68,19 @@ struct TorrentAppMain: App {
                 Button("Select All") { NSApp.sendAction(#selector(NSResponder.selectAll(_:)), to: nil, from: nil) }
                     .keyboardShortcut("a", modifiers: .command)
             }
+        }
+    }
+
+    /// Handles `magnet:` links and `.torrent` files opened from Finder, a browser, or `open(1)`.
+    /// Info.plist claims both; without this they'd foreground the app and do nothing.
+    @MainActor
+    private func handleOpenedURLs(_ urls: [URL]) {
+        let magnets = urls.filter { $0.scheme?.lowercased() == "magnet" }.map(\.absoluteString)
+        if !magnets.isEmpty {
+            addTorrentViewModel.addMagnets(magnets)
+        }
+        for url in urls where url.isFileURL && url.pathExtension.lowercased() == "torrent" {
+            addTorrentViewModel.submitTorrentFile(at: url)
         }
     }
 

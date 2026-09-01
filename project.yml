@@ -7,6 +7,10 @@ options:
 
 settings:
   base:
+    # Homebrew ships single-architecture dylibs (arm64 on Apple Silicon, x86_64 on Intel), so a
+    # universal build is impossible — Release defaults to ARCHS_STANDARD and fails to link the
+    # x86_64 slice. Build for the host architecture only.
+    ARCHS: "$(NATIVE_ARCH_ACTUAL)"
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     ENABLE_HARDENED_RUNTIME: NO
@@ -30,6 +34,10 @@ targets:
         LSApplicationCategoryType: public.app-category.utilities
         NSPrincipalClass: NSApplication
         LSMinimumSystemVersion: "14.0"
+        # Belt-and-braces alongside Scripts/install.sh's LaunchServices cleanup: keeps a stray
+        # copy of the bundle (or `open -n`) from running a second instance that would fight over
+        # the same Application Support directory and libtorrent session.
+        LSMultipleInstancesProhibited: true
         CFBundleDocumentTypes:
           - CFBundleTypeName: BitTorrent File
             CFBundleTypeRole: Viewer
@@ -65,6 +73,9 @@ targets:
           - /opt/homebrew/lib
         LD_RUNPATH_SEARCH_PATHS:
           - $(inherited)
+          # Lets Scripts/install.sh vendor the Homebrew dylibs into Contents/Frameworks by
+          # rewriting load commands to @rpath, without having to inject an rpath after the fact.
+          - "@executable_path/../Frameworks"
           - /opt/homebrew/opt/libtorrent-rasterbar/lib
           - /opt/homebrew/lib
         OTHER_LDFLAGS:
