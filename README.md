@@ -61,7 +61,7 @@ That's the whole thing. It:
 4. Copies libtorrent-rasterbar, libssl, and libcrypto into `TorrentApp.app/Contents/Frameworks` and rewrites the load commands to `@rpath`, so the installed app keeps working after a `brew upgrade` that bumps libtorrent's version.
 5. Re-signs the bundle ad-hoc (rewriting load commands invalidates the signature).
 6. Quits any running copy and installs to `/Applications/TorrentApp.app`.
-7. **Unregisters every other copy of the app from LaunchServices** and registers the installed one.
+7. **Removes every other copy of the app** — unregisters it from LaunchServices, and deletes the bundle outright when it sits under DerivedData or `./build` (those are build artifacts; anything elsewhere is only unregistered, and reported for you to delete). Then registers the installed copy.
 8. Sets TorrentApp as the default `magnet:` handler.
 
 Expect two things afterwards: macOS may show a consent prompt when the default handler is set, and the
@@ -83,29 +83,73 @@ magnet link can open a *second* instance while the first is already running, wit
 same libtorrent session and Application Support directory.
 
 Copies accumulate easily: `xcodebuild` registers its own build product as a build phase, and every
-`xcodegen generate` can mint a fresh DerivedData folder. Building to a fixed `./build` path and
-unregistering everything else is what keeps exactly one copy in play. Check at any time with:
+`xcodegen generate` can mint a fresh DerivedData folder.
+
+**Unregistering a copy is not enough on its own.** The bundle is still on disk, so macOS registers it
+again the next time it rescans — and `xcodebuild` re-registers its own build product every single
+build. That is why the script *deletes* leftover bundles under DerivedData and `./build` rather than
+just unregistering them. They cost nothing: the next build recreates them.
+
+The app also enforces this from the inside, so it holds even if a stray copy turns up again. At launch
+it looks for another running process with the same bundle ID; if it finds one, it hands over any
+magnet link it was launched with (via a distributed notification) and exits before creating a window
+or opening the libtorrent session. One process, whichever copy of the bundle macOS decided to launch.
+
+Check the state of things at any time — this changes nothing:
 
 ```sh
-/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -dump | grep -oE '/[^ ]*TorrentApp\.app' | sort -u
+./Scripts/doctor.sh
 ```
 
-After a clean install that should print `/Applications/TorrentApp.app` and nothing else.
+It prints every registered bundle, every bundle on disk, every running process, the current default
+`magnet:` handler, and whether the installed app is self-contained. After a clean install, the
+registered list should be `/Applications/TorrentApp.app` and nothing else.
+
+### If a magnet link still opens a new instance
+
+Run `./Scripts/doctor.sh` and look at sections 1–3. In order of likelihood:
+
+- **Section 1 lists more than one bundle.** Re-run `./Scripts/install.sh` — it now deletes the extras
+  rather than only unregistering them. If it reports a copy it won't delete (one outside a build
+  directory, e.g. on the Desktop or in `~/Downloads`), delete that copy yourself.
+- **Section 3 shows two processes.** You are running a build of the app from *before* the
+  single-instance guard existed. Re-run `./Scripts/install.sh`, then quit the app fully (⌘Q, not just
+  closing the window) so the new binary is the one running.
+- **Section 4 names something other than `/Applications/TorrentApp.app`.** macOS is routing magnet
+  links to a different app or a stale path; `./Scripts/install.sh` resets it.
 
 ### Updating
 
-Re-run `./Scripts/install.sh`. It quits the running copy and replaces the installed bundle in place.
+```sh
+git pull
+./Scripts/install.sh
+```
+
+The same script *is* the updater. It quits the running copy, rebuilds, replaces
+`/Applications/TorrentApp.app` in place, and re-runs the LaunchServices cleanup — so there is never an
+"old one" left behind to uninstall. Settings, the torrent list, and resume data all live outside the
+bundle in `~/Library/Application Support/TorrentApp`, so an update keeps them.
+
+The app is quit and relaunched, which means active torrents pause for a few seconds and resume from
+their saved state.
 
 ### Uninstalling
 
 ```sh
-LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
-"$LSREG" -u /Applications/TorrentApp.app
-rm -rf /Applications/TorrentApp.app
-rm -rf ~/"Library/Application Support/TorrentApp"    # session state and settings; leaves downloads alone
+./Scripts/uninstall.sh
 ```
 
-The `lsregister -u` matters — without it macOS keeps offering a deleted app as a `magnet:` handler.
+Quits the app, clears every LaunchServices registration, and deletes every copy of the bundle it finds
+(`/Applications`, DerivedData, `./build`). It shows you the list and asks before deleting anything.
+Downloaded files are never touched, and the app's own data is kept unless you ask for it to go:
+
+```sh
+./Scripts/uninstall.sh --purge-data   # also removes ~/Library/Application Support/TorrentApp
+./Scripts/uninstall.sh --yes          # skip the confirmation prompt
+```
+
+Clearing the registrations is the part that's easy to forget by hand — without it macOS keeps offering
+a deleted app as a `magnet:` handler.
 
 ## Build & run (development)
 
@@ -152,7 +196,9 @@ The app is unsigned (ad-hoc "Sign to Run Locally") and not notarized, which is e
 TorrentApp/
 ├── project.yml                  # XcodeGen project spec (source of truth)
 ├── Scripts/
-│   └── install.sh               # Release build -> self-contained app -> /Applications
+│   ├── install.sh               # Release build -> self-contained app -> /Applications
+│   ├── uninstall.sh             # Remove the app and its LaunchServices registrations
+│   └── doctor.sh                # Read-only: diagnose duplicate instances / magnet handling
 ├── Resources/
 │   └── Assets.xcassets/         # App icon, accent color
 └── Sources/

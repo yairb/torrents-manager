@@ -8,7 +8,10 @@
 # xcodegen does routinely) mints a *new* DerivedData folder, so copies accumulate. LaunchServices
 # keys apps by path, not bundle ID, so it treats them as different apps and will happily run
 # several at once — which is what makes a magnet click open a second instance. This script builds
-# to a fixed path, installs exactly one bundle, and unregisters every other copy it finds.
+# to a fixed path, installs exactly one bundle, and removes every other copy of it: unregistering
+# alone doesn't last, because a bundle still sitting on disk gets registered again on the next
+# rescan. Copies under DerivedData or ./build are deleted outright (they are build artifacts and
+# rebuild on demand); anything elsewhere is unregistered and reported for you to deal with.
 #
 # Usage:
 #   ./Scripts/install.sh                  # build and install to /Applications
@@ -188,21 +191,52 @@ if [[ "$DESTINATION" != "/Applications" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-step "Cleaning up duplicate LaunchServices registrations"
+step "Removing every other copy of the app"
 # ---------------------------------------------------------------------------
 
-# This is the actual fix for "a magnet link opens a new instance": every stale copy registered
-# under this bundle ID is a separate app as far as LaunchServices is concerned.
+# This is the actual fix for "a magnet link opens a new instance". LaunchServices keys apps by
+# path, not by bundle ID, so any other TorrentApp.app on disk is a *different app* as far as it is
+# concerned — one it is happy to launch alongside the installed copy.
 #
-# Note that xcodebuild registers its own build product (it runs `lsregister -f -R -trusted` on the
-# .app as a build phase), so the copy under ./build lands here too and must be unregistered — not
-# just the old DerivedData ones.
+# Unregistering is not enough on its own: the bundle is still on disk, so LaunchServices registers
+# it again the next time it rescans, and `xcodebuild` re-registers its own build product outright
+# (it runs `lsregister -f -R -trusted` as a build phase). Copies that are plainly build artifacts
+# are therefore deleted rather than just unregistered. Anything outside a build directory is only
+# unregistered and reported, since it might be a copy you put there deliberately.
+
+is_build_artifact() {
+  case "$1" in
+    "$HOME"/Library/Developer/Xcode/DerivedData/*) return 0 ;;
+    "$REPO_ROOT"/build/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 while IFS= read -r stale; do
   [[ -n "$stale" ]] || continue
   [[ "$stale" == "$INSTALLED_APP" ]] && continue
   echo "  unregistering $stale"
   "$LSREGISTER" -u "$stale" >/dev/null 2>&1 || true
+  if [[ -d "$stale" ]]; then
+    if is_build_artifact "$stale"; then
+      echo "  deleting build artifact  $stale"
+      rm -rf "$stale"
+    else
+      warn "$stale is still on disk. Delete it, or macOS may register it again and open magnet
+         links with it instead of $INSTALLED_APP."
+    fi
+  fi
 done < <("$LSREGISTER" -dump 2>/dev/null | grep -oE "/[^ ]*$APP_NAME\.app" | sort -u)
+
+# A build artifact that hasn't been registered yet is still a time bomb, so sweep the build
+# directories as well rather than trusting the registration database to list everything.
+while IFS= read -r artifact; do
+  [[ -n "$artifact" ]] || continue
+  echo "  deleting build artifact  $artifact"
+  "$LSREGISTER" -u "$artifact" >/dev/null 2>&1 || true
+  rm -rf "$artifact"
+done < <(find "$HOME/Library/Developer/Xcode/DerivedData" "$REPO_ROOT/build" \
+              -maxdepth 6 -type d -name "$APP_NAME.app" -prune -print 2>/dev/null | sort -u || true)
 
 "$LSREGISTER" -f "$INSTALLED_APP"
 echo "Registered $INSTALLED_APP"
