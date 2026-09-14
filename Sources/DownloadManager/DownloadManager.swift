@@ -14,23 +14,50 @@ actor DownloadManager {
     private var pendingPublishTask: Task<Void, Never>?
     private var completionSoundEnabled = true
 
-    private let continuation: AsyncStream<[Torrent]>.Continuation
-    nonisolated let snapshots: AsyncStream<[Torrent]>
+    private var continuations: [UUID: AsyncStream<[Torrent]>.Continuation] = [:]
+    private var isStarted = false
+
+    /// A *fresh* stream per observer.
+    ///
+    /// Deliberately not one shared stream created in `init`. An `AsyncStream` has a single
+    /// consumer, and cancelling the task iterating it terminates the stream permanently: every
+    /// later `yield` is silently dropped and a new `for await` finishes immediately. SwiftUI
+    /// cancels a `.task` whenever it re-creates the view, so one shared stream meant that the
+    /// first time the window's content was rebuilt the list froze for the rest of the session —
+    /// torrents kept downloading, the UI never heard about any of it, and only a relaunch fixed it.
+    var snapshots: AsyncStream<[Torrent]> {
+        let id = UUID()
+        // Only the newest snapshot is ever of interest — each one carries complete state, so an
+        // older one is pure waste. Bounding to 1 coalesces redundant frames structurally (no
+        // timer needed) and makes it impossible for a slow consumer to accumulate a backlog and
+        // render state from seconds ago.
+        return AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            continuations[id] = continuation
+            // Start from the current state rather than waiting for the next engine tick, so a
+            // re-subscribing observer never shows an empty list.
+            continuation.yield(currentSnapshot())
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeContinuation(id) }
+            }
+        }
+    }
+
+    private func removeContinuation(_ id: UUID) {
+        continuations.removeValue(forKey: id)
+    }
 
     init(engine: any TorrentEngine, persistenceStore: any PersistenceStore = JSONFilePersistenceStore(), maxParallelDownloads: Int = 3) {
         self.engine = engine
         self.persistenceStore = persistenceStore
         self.maxParallelDownloads = maxParallelDownloads
-        var cont: AsyncStream<[Torrent]>.Continuation!
-        // Only the newest snapshot is ever of interest — each one carries complete state, so an
-        // older one is pure waste. Bounding to 1 coalesces redundant frames structurally (no
-        // timer needed) and makes it impossible for a slow consumer to accumulate a backlog and
-        // render state from seconds ago.
-        self.snapshots = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { cont = $0 }
-        self.continuation = cont
     }
 
     func start() async throws {
+        // SwiftUI re-runs the `.task` that calls this every time it re-creates the view. Starting
+        // twice would stand up a second event-consumer task and re-attach every persisted record
+        // on top of itself.
+        guard !isStarted else { return }
+        isStarted = true
         try await engine.start()
         eventConsumerTask = Task { [weak self] in
             guard let self else { return }
@@ -106,6 +133,7 @@ actor DownloadManager {
     func shutdown() async {
         eventConsumerTask?.cancel()
         pendingPublishTask?.cancel()
+        isStarted = false
         await engine.shutdown()
     }
 
@@ -382,6 +410,13 @@ actor DownloadManager {
     private func publish() {
         pendingPublishTask?.cancel()
         pendingPublishTask = nil
-        continuation.yield(Array(torrents.values).sorted { $0.addedAt > $1.addedAt })
+        let snapshot = currentSnapshot()
+        for continuation in continuations.values {
+            continuation.yield(snapshot)
+        }
+    }
+
+    private func currentSnapshot() -> [Torrent] {
+        Array(torrents.values).sorted { $0.addedAt > $1.addedAt }
     }
 }

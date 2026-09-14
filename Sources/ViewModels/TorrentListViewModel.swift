@@ -20,11 +20,17 @@ final class TorrentListViewModel {
         self.downloadManager = downloadManager
     }
 
+    /// Idempotent, and deliberately never cancels a live observation.
+    ///
+    /// SwiftUI re-runs the `.task` that calls this every time it re-creates the view. Tearing the
+    /// observation down and standing it back up on each of those used to kill the snapshot stream
+    /// outright — cancelling the task iterating an `AsyncStream` terminates it for good — which
+    /// left the list showing whatever it happened to hold at that moment until the app relaunched.
     func startObserving() async {
-        observationTask?.cancel()
+        guard observationTask == nil else { return }
         observationTask = Task { [weak self] in
             guard let self else { return }
-            let stream = self.downloadManager.snapshots
+            let stream = await self.downloadManager.snapshots
             for await snapshot in stream {
                 self.apply(snapshot)
             }
