@@ -9,6 +9,10 @@ struct TorrentAppMain: App {
     @State private var addTorrentViewModel: AddTorrentViewModel
     @State private var settingsManager: SettingsManager
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.openWindow) private var openWindow
+
+    /// Identifies the one and only window, so the delegate can bring it back after a ⌘W.
+    private static let mainWindowID = "main"
 
     private let downloadManager: DownloadManager
 
@@ -29,7 +33,11 @@ struct TorrentAppMain: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        // `Window`, not `WindowGroup`. A WindowGroup is a *template*: SwiftUI opens a brand-new
+        // window from it for every external URL event, so clicking several magnet links produced
+        // several windows inside the one process. A `Window` scene is unique by construction —
+        // there is exactly one, and every magnet link lands in it.
+        Window("TorrentApp", id: Self.mainWindowID) {
             ContentView()
                 .environment(navigationState)
                 .environment(listViewModel)
@@ -42,7 +50,10 @@ struct TorrentAppMain: App {
                     // Only now is it safe to add torrents — before this the engine isn't running
                     // and the default download directory hasn't been loaded. Any magnet that
                     // launched the app has been buffered by the delegate and drains here.
-                    appDelegate.setHandler { urls in handleOpenedURLs(urls) }
+                    appDelegate.configure(
+                        reopenWindow: { openWindow(id: Self.mainWindowID) },
+                        handler: { urls in handleOpenedURLs(urls) }
+                    )
                 }
         }
         .windowToolbarStyle(.unified)

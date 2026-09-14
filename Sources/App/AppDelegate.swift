@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let urlsKey = "urls"
 
     private var handler: (([URL]) -> Void)?
+    private var reopenWindow: (() -> Void)?
     private var pendingURLs: [URL] = []
 
     /// Non-nil when another copy was already running when this process launched, which makes this
@@ -87,11 +88,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - URLs
 
-    /// Installs the handler that actually adds torrents, and immediately drains anything that
-    /// arrived beforehand. Call this only once startup has completed — that is what makes the
-    /// buffering meaningful.
+    /// Installs the handler that actually adds torrents, plus the action that brings the app's
+    /// single window back once it has been closed, and immediately drains anything that arrived
+    /// beforehand. Call this only once startup has completed — that is what makes the buffering
+    /// meaningful.
     @MainActor
-    func setHandler(_ handler: @escaping ([URL]) -> Void) {
+    func configure(reopenWindow: @escaping () -> Void, handler: @escaping ([URL]) -> Void) {
+        self.reopenWindow = reopenWindow
         self.handler = handler
         drain()
     }
@@ -139,10 +142,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    /// Brings the existing window forward — never creates a second one. The `Window` scene in
+    /// `TorrentAppMain` guarantees there is at most one to find; `reopenWindow` re-opens that same
+    /// window by id when it has been closed outright.
     private func showWindow() {
         NSApp.activate(ignoringOtherApps: true)
-        // When every window has been closed there is nothing to raise; SwiftUI re-creates one via
-        // -applicationShouldHandleReopen: above, which AppKit calls as part of the activation.
-        NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+        if let existing = NSApp.windows.first(where: { $0.canBecomeMain }) {
+            existing.makeKeyAndOrderFront(nil)
+        } else {
+            reopenWindow?()
+        }
     }
 }

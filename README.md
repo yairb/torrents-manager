@@ -68,6 +68,11 @@ Expect two things afterwards: macOS may show a consent prompt when the default h
 app now stays in the Dock after you close its window — it keeps downloading and seeding, and a magnet
 click brings that same instance back rather than starting a new one.
 
+The app has exactly **one** window. Clicking ten magnet links in a row adds ten torrents to the one
+list; it does not open ten windows. That is enforced by the scene type (`Window`, not `WindowGroup`)
+rather than by tidying up afterwards — a `WindowGroup` is a template SwiftUI instantiates afresh for
+each external URL event, which is what produced a window per link.
+
 Useful flags:
 
 ```sh
