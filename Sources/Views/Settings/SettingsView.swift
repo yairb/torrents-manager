@@ -8,6 +8,10 @@ struct SettingsView: View {
     @State private var editingTag: Tag?
     @State private var isPresentingTagEditor = false
 
+    /// Below this, BitTorrent's tit-for-tat choking starts costing noticeably more download speed
+    /// than the upload cap saves. Chosen to match the usual client guidance, not measured here.
+    private static let uploadLimitSlowdownThreshold = 50 * 1024
+
     var body: some View {
         @Bindable var settingsManager = settingsManager
 
@@ -32,6 +36,19 @@ struct SettingsView: View {
             Section("Speed Limits") {
                 SpeedLimitField(title: "Download Limit", limit: $settingsManager.settings.globalDownloadLimitBytesPerSec)
                 SpeedLimitField(title: "Upload Limit", limit: $settingsManager.settings.globalUploadLimitBytesPerSec)
+                if let upload = settingsManager.settings.globalUploadLimitBytesPerSec,
+                   upload > 0, upload < Self.uploadLimitSlowdownThreshold {
+                    Label(
+                        """
+                        A very low upload limit slows downloads as well. Peers send fastest to \
+                        whoever sends the most back, so starving your upload makes them stop \
+                        sending to you. Leaving it off, or around 50 KB/s, keeps downloads fast.
+                        """,
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                }
             }
 
             Section("General") {

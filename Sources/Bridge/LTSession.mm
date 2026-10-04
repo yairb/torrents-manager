@@ -154,6 +154,15 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     lt::settings_pack pack;
     pack.set_str(lt::settings_pack::listen_interfaces, "0.0.0.0:6881,[::]:6881");
     pack.set_bool(lt::settings_pack::enable_dht, true);
+    // libtorrent defaults this to true, which makes an *upload* limit throttle *downloads*.
+    // When it's on, libtorrent estimates the TCP/IP header cost of traffic and drains that
+    // estimate from the rate limiters — and the ACKs a fast download generates are outgoing, so
+    // they're charged to the upload limiter. One 40-byte ACK per two 1500-byte packets is roughly
+    // 1.3% of the download rate, so a 10 KB/s upload cap caps downloads at well under 1 MB/s
+    // before a single byte of real upload payload has been sent. Requests and `have` messages
+    // then queue behind that and the pipeline starves. Turning it off means the limits apply to
+    // BitTorrent traffic only, which is what someone setting "upload limit: 10 KB/s" expects.
+    pack.set_bool(lt::settings_pack::rate_limit_ip_overhead, false);
     // Deliberately NOT subscribing to alert_category::piece_progress: it posts
     // block_downloading/block_finished/piece_finished alerts at roughly one per 16 KiB block,
     // i.e. hundreds to thousands per second at any real download rate. `handleAlert:` ignores
