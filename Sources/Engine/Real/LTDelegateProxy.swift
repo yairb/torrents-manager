@@ -53,9 +53,8 @@ final class LTDelegateProxy: NSObject, LTSessionDelegate {
         case .checking: return .checking
         case .downloadingMetadata: return .downloadingMetadata
         case .downloading: return .downloading
-        case .seeding: return .seeding
         case .paused: return .paused
-        case .completed: return .completed
+        case .done: return .done
         case .failed: return .failed
         @unknown default: return .failed
         }

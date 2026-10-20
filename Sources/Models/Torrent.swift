@@ -26,8 +26,27 @@ struct Torrent: Identifiable, Sendable, Equatable {
     var trackers: [TrackerInfo]
 }
 
+/// `done` is terminal: the app never seeds, so a finished torrent just sits in the list,
+/// uploading nothing, until the user removes it.
 enum TorrentStatus: String, Sendable, Codable, CaseIterable {
-    case queued, checking, downloadingMetadata, downloading, seeding, paused, completed, failed
+    case queued, checking, downloadingMetadata, downloading, paused, done, failed
+
+    init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        // Records written before seeding was dropped: finished torrents were persisted as
+        // either `completed` or `seeding` depending on which one the engine last reported.
+        case "completed", "seeding":
+            self = .done
+        default:
+            guard let status = TorrentStatus(rawValue: raw) else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: decoder.codingPath, debugDescription: "Unknown torrent status '\(raw)'")
+                )
+            }
+            self = status
+        }
+    }
 }
 
 enum TorrentPriority: Int, Sendable, Codable, Comparable, CaseIterable {

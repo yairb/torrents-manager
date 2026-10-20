@@ -65,7 +65,7 @@ That's the whole thing. It:
 8. Sets TorrentApp as the default `magnet:` handler.
 
 Expect two things afterwards: macOS may show a consent prompt when the default handler is set, and the
-app now stays in the Dock after you close its window — it keeps downloading and seeding, and a magnet
+app now stays in the Dock after you close its window — it keeps downloading, and a magnet
 click brings that same instance back rather than starting a new one.
 
 The app has exactly **one** window. Clicking ten magnet links in a row adds ten torrents to the one

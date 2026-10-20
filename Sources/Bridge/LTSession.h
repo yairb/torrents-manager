@@ -11,9 +11,10 @@ typedef NS_ENUM(NSInteger, LTTorrentStatus) {
     LTTorrentStatusChecking,
     LTTorrentStatusDownloadingMetadata,
     LTTorrentStatusDownloading,
-    LTTorrentStatusSeeding,
     LTTorrentStatusPaused,
-    LTTorrentStatusCompleted,
+    /// Finished. The session pauses a torrent as soon as it completes — this app never
+    /// seeds — so "done" covers libtorrent's finished and seeding states alike.
+    LTTorrentStatusDone,
     LTTorrentStatusFailed,
 };
 

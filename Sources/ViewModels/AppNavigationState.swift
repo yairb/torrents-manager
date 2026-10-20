@@ -4,7 +4,7 @@ import Observation
 enum SidebarCategory: String, CaseIterable, Identifiable {
     case all = "All Torrents"
     case downloading = "Downloading"
-    case completed = "Completed"
+    case done = "Done"
     case failed = "Failed"
     case settings = "Settings"
 
@@ -14,7 +14,7 @@ enum SidebarCategory: String, CaseIterable, Identifiable {
         switch self {
         case .all: return "tray.full"
         case .downloading: return "arrow.down.circle"
-        case .completed: return "checkmark.circle"
+        case .done: return "checkmark.circle"
         case .failed: return "exclamationmark.triangle"
         case .settings: return "gearshape"
         }

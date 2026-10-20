@@ -73,13 +73,16 @@ actor DownloadManager {
     }
 
     /// Restores a persisted torrent across an app restart. Torrents that were still active
-    /// (downloading, paused, queued, checking, seeding) need a live engine handle again —
+    /// (downloading, paused, queued, checking) need a live engine handle again —
     /// re-adding via the stored magnet URI or raw torrent data reuses the same info-hash-derived
     /// ID, so it reattaches to whatever data libtorrent finds on disk rather than starting over.
     /// Torrents with no way to reconstruct their metadata (or that fail to re-add) fall back to
     /// `.failed` since there's nothing left to resume.
     private func reattach(_ record: TorrentRecord) async {
-        guard record.status != .completed, record.status != .failed else {
+        // A `.done` torrent is never handed back to the engine: it has nothing left to
+        // download and the app doesn't seed, so a live handle would only mean libtorrent
+        // rechecking it against disk and announcing it to trackers for no reason.
+        guard record.status != .done, record.status != .failed else {
             torrents[record.id] = record.makeTorrent()
             return
         }
@@ -197,7 +200,7 @@ actor DownloadManager {
         do {
             try await engine.remove(id, deleteFiles: deleteFiles)
         } catch EngineError.torrentNotFound {
-            // Torrents persisted as terminal (failed/completed) before a fix, or that
+            // Torrents persisted as terminal (failed/done) before a fix, or that
             // otherwise never got a live engine handle, have nothing to remove from the
             // engine — fall through and just clean up local/persisted state.
         }
@@ -220,7 +223,7 @@ actor DownloadManager {
     func setRenameRule(_ id: TorrentHandleID, finalName: String?) {
         guard var torrent = torrents[id] else { return }
         if let finalName, !finalName.isEmpty {
-            torrent.renameRule = RenameRule(finalName: finalName, appliedAt: torrent.status == .completed ? Date() : nil)
+            torrent.renameRule = RenameRule(finalName: finalName, appliedAt: torrent.status == .done ? Date() : nil)
             torrent.displayName = finalName
         } else {
             torrent.renameRule = nil
@@ -294,12 +297,18 @@ actor DownloadManager {
             persistTorrent(id)
 
         case .statusUpdate(let id, let snapshot):
-            torrents[id]?.status = snapshot.status
+            guard let current = torrents[id] else { break }
+            // `.done` is terminal until the user removes the torrent. The engine keeps
+            // reporting on a finished handle (as paused, or as checking after a recheck),
+            // and none of that should drag the row back out of Done.
+            if current.status != .done {
+                torrents[id]?.status = snapshot.status
+                torrents[id]?.downloadSpeed = snapshot.downloadSpeed
+                torrents[id]?.uploadSpeed = snapshot.uploadSpeed
+                torrents[id]?.eta = snapshot.eta
+            }
             torrents[id]?.progress = snapshot.progress
-            torrents[id]?.downloadSpeed = snapshot.downloadSpeed
-            torrents[id]?.uploadSpeed = snapshot.uploadSpeed
             torrents[id]?.downloadedBytes = snapshot.downloadedBytes
-            torrents[id]?.eta = snapshot.eta
 
         case .fileCompleted(let id, let fileIndex):
             guard var torrent = torrents[id], torrent.files.indices.contains(fileIndex) else { break }
@@ -307,13 +316,21 @@ actor DownloadManager {
             torrents[id] = torrent
 
         case .torrentCompleted(let id):
-            // `reattach` re-adds anything that isn't already terminal, including seeding
-            // torrents. libtorrent rechecks those against what's on disk, finds them complete,
-            // and posts torrent_finished_alert again — so without this guard every seeding
-            // torrent would ding and re-run its completion script on every app launch.
-            let wasAlreadyFinished = torrents[id]?.status == .completed || torrents[id]?.status == .seeding
-            torrents[id]?.status = .completed
-            torrents[id]?.completedAt = Date()
+            // libtorrent re-posts torrent_finished_alert whenever it rechecks a torrent it
+            // finds complete on disk, so this can fire for a torrent that finished long ago —
+            // without the guard below it would ding and re-run its completion script again.
+            let wasAlreadyFinished = torrents[id]?.status == .done
+            torrents[id]?.status = .done
+            // Only on the real completion — a recheck re-firing this alert shouldn't
+            // reset the timestamp of a torrent that finished days ago.
+            if !wasAlreadyFinished { torrents[id]?.completedAt = Date() }
+            // The engine stops the torrent on completion (no seeding), so the last speeds it
+            // reported are stale the moment we get here.
+            torrents[id]?.downloadSpeed = 0
+            torrents[id]?.uploadSpeed = 0
+            torrents[id]?.eta = nil
+            queuedIDs.remove(id)
+            pausedIDs.remove(id)
             persistTorrent(id)
             promoteQueuedTorrentsIfNeeded()
             if !wasAlreadyFinished {

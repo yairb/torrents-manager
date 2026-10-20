@@ -69,7 +69,7 @@ struct TorrentDetailView: View {
                 Spacer()
                 if torrent.status == .paused {
                     Button("Resume") { viewModel.resume(torrent) }
-                } else if torrent.status != .completed && torrent.status != .failed {
+                } else if torrent.status != .done && torrent.status != .failed {
                     Button("Pause") { viewModel.pause(torrent) }
                 }
             }

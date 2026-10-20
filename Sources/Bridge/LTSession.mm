@@ -69,9 +69,11 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
         case lt::torrent_status::downloading:
             return paused ? LTTorrentStatusPaused : LTTorrentStatusDownloading;
         case lt::torrent_status::finished:
-            return paused ? LTTorrentStatusPaused : LTTorrentStatusCompleted;
         case lt::torrent_status::seeding:
-            return paused ? LTTorrentStatusPaused : LTTorrentStatusSeeding;
+            // Deliberately ignores the paused flag: finished torrents are paused on purpose
+            // (see torrent_finished_alert below), and there's nothing left to un-pause, so
+            // reporting them as "paused" would just be a confusing way to say "done".
+            return LTTorrentStatusDone;
         default:
             return paused ? LTTorrentStatusPaused : LTTorrentStatusQueued;
     }
@@ -281,6 +283,11 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
 
     if (auto *tf = lt::alert_cast<lt::torrent_finished_alert>(a)) {
         NSString *handleID = handleIDForInfoHashes(tf->handle.info_hashes());
+        // The app doesn't seed: stop the torrent the moment it finishes so libtorrent never
+        // starts uploading it to peers. Clearing auto_managed first is what makes the pause
+        // stick — the session's queue would otherwise resume it again on its next pass.
+        tf->handle.unset_flags(lt::torrent_flags::auto_managed);
+        tf->handle.pause();
         [self.delegate session:self didCompleteTorrentWithHandleID:handleID];
         return;
     }

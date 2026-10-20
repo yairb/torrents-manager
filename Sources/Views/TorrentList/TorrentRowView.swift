@@ -108,9 +108,8 @@ private struct StatusBadge: View {
         case .checking: return "Checking"
         case .downloadingMetadata: return "Fetching Info"
         case .downloading: return "Downloading"
-        case .seeding: return "Seeding"
         case .paused: return "Paused"
-        case .completed: return "Completed"
+        case .done: return "Done"
         case .failed: return "Failed"
         }
     }
@@ -119,7 +118,7 @@ private struct StatusBadge: View {
         switch status {
         case .queued, .checking, .downloadingMetadata: return .gray
         case .downloading: return .blue
-        case .seeding, .completed: return .green
+        case .done: return .green
         case .paused: return .orange
         case .failed: return .red
         }

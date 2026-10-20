@@ -112,7 +112,7 @@ actor FakeTorrentEngine: TorrentEngine {
             let eta: TimeInterval? = state.downloadSpeed > 0 ? Double(remaining) / Double(state.downloadSpeed) : nil
 
             let snapshot = TorrentStatusSnapshot(
-                status: state.progress >= 1.0 ? .completed : .downloading,
+                status: state.progress >= 1.0 ? .done : .downloading,
                 progress: state.progress,
                 downloadSpeed: state.progress >= 1.0 ? 0 : state.downloadSpeed,
                 uploadSpeed: Int64.random(in: 0...200_000),

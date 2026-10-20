@@ -92,7 +92,7 @@ struct TorrentListView: View {
         Divider()
         if torrent.status == .paused {
             Button("Resume") { viewModel.resume(torrent) }
-        } else {
+        } else if torrent.status != .done && torrent.status != .failed {
             Button("Pause") { viewModel.pause(torrent) }
         }
         Divider()

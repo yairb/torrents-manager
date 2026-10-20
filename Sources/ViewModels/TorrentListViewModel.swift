@@ -64,7 +64,7 @@ final class TorrentListViewModel {
         switch category {
         case .all: return visible
         case .downloading: return visible.filter { Self.isActive($0.status) }
-        case .completed: return visible.filter { $0.status == .completed || $0.status == .seeding }
+        case .done: return visible.filter { $0.status == .done }
         case .failed: return visible.filter { $0.status == .failed }
         case .settings: return []
         }
