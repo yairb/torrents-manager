@@ -98,5 +98,9 @@ struct TorrentListView: View {
         Divider()
         Button("Remove", role: .destructive) { viewModel.remove(torrent, deleteFiles: false) }
         Button("Remove and Delete Files", role: .destructive) { viewModel.remove(torrent, deleteFiles: true) }
+        if viewModel.hasDoneTorrents {
+            Divider()
+            Button("Clear Done Items") { viewModel.removeDoneTorrents() }
+        }
     }
 }

@@ -97,6 +97,17 @@ final class TorrentListViewModel {
         }
     }
 
+    /// Drops every finished torrent from the list, leaving the downloaded files in place.
+    func removeDoneTorrents() {
+        for torrent in torrents where torrent.status == .done && !pendingRemovalIDs.contains(torrent.id) {
+            remove(torrent, deleteFiles: false)
+        }
+    }
+
+    var hasDoneTorrents: Bool {
+        torrents.contains { $0.status == .done && !pendingRemovalIDs.contains($0.id) }
+    }
+
     func torrent(withID id: TorrentHandleID?) -> Torrent? {
         guard let id, !pendingRemovalIDs.contains(id) else { return nil }
         return torrents.first { $0.id == id }
