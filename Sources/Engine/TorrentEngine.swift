@@ -28,9 +28,20 @@ protocol TorrentEngine: Actor {
     var events: AsyncStream<TorrentEngineEvent> { get }
 }
 
+/// What a torrent should be allowed to do the moment it is added.
+enum TorrentStartMode: Sendable {
+    case active
+    /// Fetch metadata — name, total size, file list — but download no content. What a torrent
+    /// that lands in the queue does while it waits for a free download slot, so its row stops
+    /// reading "Fetching metadata…" even though nothing is being downloaded yet. Engines with
+    /// nothing left to fetch (a torrent added from a `.torrent` file) treat this as `.paused`.
+    case metadataOnly
+    case paused
+}
+
 struct AddTorrentOptions: Sendable {
     var destinationDirectory: URL
-    var startPaused: Bool = false
+    var startMode: TorrentStartMode = .active
     var sequentialDownload: Bool = false
 }
 

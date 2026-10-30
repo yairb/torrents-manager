@@ -25,6 +25,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace lt = libtorrent;
@@ -127,6 +128,9 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
 @interface LTSession () {
     std::unique_ptr<lt::session> _session;
     std::unordered_map<std::string, lt::torrent_handle> _handles;
+    /// Handles added in LTStartModeMetadataOnly that are still waiting for their metadata.
+    /// Guarded by _handlesMutex alongside _handles.
+    std::unordered_set<std::string> _metadataOnlyHandles;
     std::mutex _handlesMutex;
     std::thread _alertThread;
     std::atomic<bool> _running;
@@ -213,6 +217,7 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     {
         std::lock_guard<std::mutex> lock(_handlesMutex);
         _handles.clear();
+        _metadataOnlyHandles.clear();
     }
     _session.reset();
 }
@@ -267,6 +272,13 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
 
     if (auto *md = lt::alert_cast<lt::metadata_received_alert>(a)) {
         NSString *handleID = handleIDForInfoHashes(md->handle.info_hashes());
+        // A queued torrent was added un-paused purely so it could pull this metadata. Park it
+        // now, before the piece picker it just gained starts asking peers for actual content —
+        // the app restarts it from Swift once a download slot frees up. auto_managed was
+        // already cleared when it was added, so the pause sticks.
+        if ([self consumeMetadataOnlyFlagForHandleID:handleID]) {
+            md->handle.pause();
+        }
         LTMetadata *metadata = [self metadataForHandle:md->handle];
         if (metadata) {
             [self.delegate session:self handleID:handleID didReceiveMetadata:metadata];
@@ -360,7 +372,7 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
 
 - (nullable NSString *)addTorrentWithMagnetURI:(NSString *)magnetURI
                                 destinationPath:(NSString *)destinationPath
-                                    startPaused:(BOOL)startPaused
+                                      startMode:(LTStartMode)startMode
                                           error:(NSError **)error {
     if (!_session) {
         if (error) *error = ltMakeError(@"Session is not started");
@@ -376,7 +388,7 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     }
 
     params.save_path = std::string(destinationPath.UTF8String);
-    [self applyStartPaused:startPaused toParams:params];
+    [self applyStartMode:startMode toParams:params];
 
     lt::error_code addEc;
     lt::torrent_handle handle = _session->add_torrent(std::move(params), addEc);
@@ -385,12 +397,17 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
         return nil;
     }
 
-    return [self storeHandle:handle];
+    NSString *handleID = [self storeHandle:handle];
+    if (startMode == LTStartModeMetadataOnly) {
+        std::lock_guard<std::mutex> lock(_handlesMutex);
+        _metadataOnlyHandles.insert(std::string(handleID.UTF8String));
+    }
+    return handleID;
 }
 
 - (nullable NSString *)addTorrentWithFileData:(NSData *)fileData
                                destinationPath:(NSString *)destinationPath
-                                   startPaused:(BOOL)startPaused
+                                     startMode:(LTStartMode)startMode
                                          error:(NSError **)error {
     if (!_session) {
         if (error) *error = ltMakeError(@"Session is not started");
@@ -409,7 +426,11 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     lt::add_torrent_params params;
     params.ti = ti;
     params.save_path = std::string(destinationPath.UTF8String);
-    [self applyStartPaused:startPaused toParams:params];
+    // A .torrent file already carries its metadata, so there is nothing for metadata-only mode
+    // to fetch — treat it as a plain pause rather than letting the torrent run unqueued while
+    // it waits for a metadata alert that will never come.
+    [self applyStartMode:(startMode == LTStartModeActive ? LTStartModeActive : LTStartModePaused)
+                toParams:params];
 
     lt::error_code addEc;
     lt::torrent_handle handle = _session->add_torrent(std::move(params), addEc);
@@ -438,12 +459,23 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
     return handleID;
 }
 
-- (void)applyStartPaused:(BOOL)startPaused toParams:(lt::add_torrent_params &)params {
-    if (startPaused) {
+- (void)applyStartMode:(LTStartMode)startMode toParams:(lt::add_torrent_params &)params {
+    // auto_managed is cleared in every mode so the app's queue is the only one in charge.
+    // libtorrent's own queue counts a metadata fetch against `active_downloads`, so an
+    // auto-managed magnet added past the limit would be paused before it ever reached a peer —
+    // and, conversely, it would happily resume torrents the app had deliberately parked.
+    params.flags &= ~lt::torrent_flags::auto_managed;
+    if (startMode == LTStartModePaused) {
         params.flags |= lt::torrent_flags::paused;
     } else {
         params.flags &= ~lt::torrent_flags::paused;
     }
+}
+
+/// Returns YES (and clears the flag) if `handleID` was still waiting on metadata-only mode.
+- (BOOL)consumeMetadataOnlyFlagForHandleID:(NSString *)handleID {
+    std::lock_guard<std::mutex> lock(_handlesMutex);
+    return _metadataOnlyHandles.erase(std::string(handleID.UTF8String)) > 0;
 }
 
 - (NSString *)storeHandle:(lt::torrent_handle const &)handle {
@@ -488,6 +520,10 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
 }
 
 - (BOOL)resumeHandle:(NSString *)handleID error:(NSError **)error {
+    // Dropping the metadata-only flag is what makes a promotion stick: without it, a torrent
+    // started from the queue before its metadata landed would be paused again the moment the
+    // alert arrived.
+    [self consumeMetadataOnlyFlagForHandleID:handleID];
     return [self withHandle:handleID error:error body:^(lt::torrent_handle const &handle) {
         handle.resume();
     }];
@@ -509,6 +545,7 @@ static LTTorrentStatus mapStatus(lt::torrent_status const &st) {
         }
         handle = it->second;
         _handles.erase(it);
+        _metadataOnlyHandles.erase(key);
     }
     lt::remove_flags_t flags{};
     if (deleteFiles) flags |= lt::session_handle::delete_files;

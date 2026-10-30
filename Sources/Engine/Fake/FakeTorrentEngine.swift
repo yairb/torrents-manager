@@ -62,7 +62,9 @@ actor FakeTorrentEngine: TorrentEngine {
                         size: totalSize / Int64(fileCount), downloadedBytes: 0, priority: .normal)
         }
         let metadata = TorrentMetadata(name: name, totalSize: totalSize, files: files, rawData: nil)
-        torrents[id] = SimState(metadata: metadata, isPaused: options.startPaused)
+        // `.metadataOnly` still delivers metadata below, it just never starts ticking — the
+        // same shape the real engine gives a queued magnet.
+        torrents[id] = SimState(metadata: metadata, isPaused: options.startMode != .active)
 
         // Simulate the brief metadata-fetch delay a real magnet link has.
         Task {

@@ -18,6 +18,20 @@ typedef NS_ENUM(NSInteger, LTTorrentStatus) {
     LTTorrentStatusFailed,
 };
 
+/// How a torrent should behave the moment it is handed to the session.
+typedef NS_ENUM(NSInteger, LTStartMode) {
+    /// Download immediately.
+    LTStartModeActive,
+    /// Fetch metadata from peers, then stop. The session pauses the torrent itself the instant
+    /// `metadata_received_alert` arrives, before it can ask a peer for real content — so a
+    /// magnet link sitting in the app's queue still fills in its name, size and file list while
+    /// it waits for a download slot. A torrent added from a `.torrent` file already carries its
+    /// metadata, so there this is identical to `LTStartModePaused`.
+    LTStartModeMetadataOnly,
+    /// Don't touch the network at all.
+    LTStartModePaused,
+};
+
 @interface LTFileInfo : NSObject
 @property (nonatomic, readonly) NSInteger fileIndex;
 @property (nonatomic, readonly, copy) NSString *path;
@@ -81,15 +95,15 @@ typedef NS_ENUM(NSInteger, LTTorrentStatus) {
 /// immediately without waiting for an alert.
 - (nullable NSString *)addTorrentWithMagnetURI:(NSString *)magnetURI
                                 destinationPath:(NSString *)destinationPath
-                                    startPaused:(BOOL)startPaused
+                                      startMode:(LTStartMode)startMode
                                           error:(NSError **)error
-    NS_SWIFT_NAME(addTorrent(magnetURI:destinationPath:startPaused:));
+    NS_SWIFT_NAME(addTorrent(magnetURI:destinationPath:startMode:));
 
 - (nullable NSString *)addTorrentWithFileData:(NSData *)fileData
                                destinationPath:(NSString *)destinationPath
-                                   startPaused:(BOOL)startPaused
+                                     startMode:(LTStartMode)startMode
                                          error:(NSError **)error
-    NS_SWIFT_NAME(addTorrent(fileData:destinationPath:startPaused:));
+    NS_SWIFT_NAME(addTorrent(fileData:destinationPath:startMode:));
 
 - (BOOL)pauseHandle:(NSString *)handleID error:(NSError **)error NS_SWIFT_NAME(pauseHandle(_:));
 - (BOOL)resumeHandle:(NSString *)handleID error:(NSError **)error NS_SWIFT_NAME(resumeHandle(_:));

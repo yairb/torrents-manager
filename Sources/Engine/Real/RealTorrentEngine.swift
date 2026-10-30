@@ -44,7 +44,7 @@ actor RealTorrentEngine: TorrentEngine {
             return try session.addTorrent(
                 magnetURI: magnetURI,
                 destinationPath: options.destinationDirectory.path,
-                startPaused: options.startPaused
+                startMode: Self.ltStartMode(for: options.startMode)
             )
         } catch {
             throw EngineError.underlying(error.localizedDescription)
@@ -59,7 +59,7 @@ actor RealTorrentEngine: TorrentEngine {
             return try session.addTorrent(
                 fileData: fileData,
                 destinationPath: options.destinationDirectory.path,
-                startPaused: options.startPaused
+                startMode: Self.ltStartMode(for: options.startMode)
             )
         } catch {
             throw EngineError.invalidTorrentFile
@@ -118,6 +118,14 @@ actor RealTorrentEngine: TorrentEngine {
                 throw EngineError.torrentNotFound(id)
             }
             throw EngineError.underlying(description)
+        }
+    }
+
+    private static func ltStartMode(for mode: TorrentStartMode) -> LTStartMode {
+        switch mode {
+        case .active: return .active
+        case .metadataOnly: return .metadataOnly
+        case .paused: return .paused
         }
     }
 

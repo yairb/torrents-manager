@@ -88,8 +88,16 @@ actor DownloadManager {
         }
 
         let destination = URL(fileURLWithPath: record.destinationDirectory)
-        let shouldStartPaused = record.status == .paused || record.status == .queued
-        let options = AddTorrentOptions(destinationDirectory: destination, startPaused: shouldStartPaused)
+        // A torrent that was still queued when the app quit is re-added in metadata-only mode so
+        // it can finish fetching metadata it may never have got. One persisted with its
+        // `.torrent` data already has that metadata, so it comes back plainly paused.
+        let startMode: TorrentStartMode
+        switch record.status {
+        case .paused: startMode = .paused
+        case .queued: startMode = record.torrentFileData == nil ? .metadataOnly : .paused
+        default: startMode = .active
+        }
+        let options = AddTorrentOptions(destinationDirectory: destination, startMode: startMode)
 
         do {
             let id: TorrentHandleID
@@ -143,7 +151,12 @@ actor DownloadManager {
     @discardableResult
     func addTorrent(magnetURI: String, destination: URL) async throws -> TorrentHandleID {
         let shouldQueue = activeCount() >= maxParallelDownloads
-        let options = AddTorrentOptions(destinationDirectory: destination, startPaused: shouldQueue)
+        // Queued magnets are still handed to the engine in metadata-only mode: waiting for a
+        // download slot shouldn't mean waiting to find out what the torrent even is.
+        let options = AddTorrentOptions(
+            destinationDirectory: destination,
+            startMode: shouldQueue ? .metadataOnly : .active
+        )
         let id = try await engine.addTorrent(magnetURI: magnetURI, options: options)
         // The same info-hash can come back from the engine more than once (duplicate
         // submission, re-adding an already-known torrent, etc). libtorrent just returns
@@ -158,7 +171,10 @@ actor DownloadManager {
     @discardableResult
     func addTorrent(fileData: Data, destination: URL) async throws -> TorrentHandleID {
         let shouldQueue = activeCount() >= maxParallelDownloads
-        let options = AddTorrentOptions(destinationDirectory: destination, startPaused: shouldQueue)
+        let options = AddTorrentOptions(
+            destinationDirectory: destination,
+            startMode: shouldQueue ? .paused : .active
+        )
         let id = try await engine.addTorrent(fileData: fileData, options: options)
         guard torrents[id] == nil else { return id }
         register(id: id, destination: destination, shouldQueue: shouldQueue, magnetURI: nil)
@@ -301,7 +317,18 @@ actor DownloadManager {
             // `.done` is terminal until the user removes the torrent. The engine keeps
             // reporting on a finished handle (as paused, or as checking after a recheck),
             // and none of that should drag the row back out of Done.
-            if current.status != .done {
+            if current.status == .done {
+                // nothing to carry over
+            } else if queuedIDs.contains(id) {
+                // A queued torrent is deliberately left running long enough to pull its
+                // metadata, so the engine reports it as fetching metadata and then as paused.
+                // Neither is what the row should say: the app's queue, not libtorrent, decides
+                // when this one starts, and no content is being transferred meanwhile.
+                torrents[id]?.status = .queued
+                torrents[id]?.downloadSpeed = 0
+                torrents[id]?.uploadSpeed = 0
+                torrents[id]?.eta = nil
+            } else {
                 torrents[id]?.status = snapshot.status
                 torrents[id]?.downloadSpeed = snapshot.downloadSpeed
                 torrents[id]?.uploadSpeed = snapshot.uploadSpeed
@@ -354,9 +381,13 @@ actor DownloadManager {
         publishSoon()
     }
 
+    /// Torrents occupying one of the `maxParallelDownloads` slots. A queued torrent that is
+    /// momentarily fetching metadata is not one of them — it holds no slot, which is the whole
+    /// point of letting it run.
     private func activeCount() -> Int {
         torrents.values.filter {
-            $0.status == .downloading || $0.status == .downloadingMetadata || $0.status == .checking
+            guard !queuedIDs.contains($0.id), !pausedIDs.contains($0.id) else { return false }
+            return $0.status == .downloading || $0.status == .downloadingMetadata || $0.status == .checking
         }.count
     }
 

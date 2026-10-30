@@ -30,6 +30,12 @@ struct ContentView: View {
                 }
             }
         }
+        // A safe-area inset rather than wrapping the whole thing in a VStack: that keeps the
+        // NavigationSplitView at the root of the window, which is what the unified toolbar and
+        // the sidebar toggle rely on, while the bar still spans every column.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            StatusBarView()
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
