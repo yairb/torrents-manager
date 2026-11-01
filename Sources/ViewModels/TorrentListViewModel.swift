@@ -6,6 +6,12 @@ import Observation
 final class TorrentListViewModel {
     private(set) var torrents: [Torrent] = []
     var errorMessage: String?
+
+    /// Bumped whenever a torrent joins or leaves the list, and never for a mere progress tick.
+    /// Snapshots arrive several times a second with new speeds and byte counts; a view that only
+    /// cares about *which* torrents exist — the free-space bar, which re-measures the disk on
+    /// add and remove — would otherwise have no way to tell those apart.
+    private(set) var membershipRevision: Int = 0
     private let downloadManager: DownloadManager
     private var observationTask: Task<Void, Never>?
 
@@ -42,6 +48,12 @@ final class TorrentListViewModel {
         if !pendingRemovalIDs.isEmpty {
             let present = Set(snapshot.map(\.id))
             pendingRemovalIDs.formIntersection(present)
+        }
+
+        // Compared as ordered ID lists rather than sets: the snapshot is always sorted by
+        // `addedAt`, so an add and a remove landing in the same frame still shows up here.
+        if snapshot.map(\.id) != torrents.map(\.id) {
+            membershipRevision &+= 1
         }
 
         // `@Observable` does no equality check of its own, so assigning an identical snapshot
@@ -101,6 +113,23 @@ final class TorrentListViewModel {
     func removeDoneTorrents() {
         for torrent in torrents where torrent.status == .done && !pendingRemovalIDs.contains(torrent.id) {
             remove(torrent, deleteFiles: false)
+        }
+    }
+
+    /// Bytes still to be written to disk by everything in the list: what the free-space bar
+    /// subtracts to project where the volume lands once the queue has drained.
+    ///
+    /// Counts torrents that are already downloading as well as queued ones. libtorrent writes
+    /// sparse files, so a torrent that has started has only taken up what it has actually
+    /// fetched so far — its remaining bytes are every bit as unclaimed as a queued torrent's.
+    /// A queued magnet that hasn't pulled its metadata yet reports a total size of 0 and so
+    /// contributes nothing until it knows how big it is.
+    var pendingDownloadBytes: Int64 {
+        torrents.reduce(into: Int64(0)) { total, torrent in
+            guard !pendingRemovalIDs.contains(torrent.id),
+                  torrent.status != .done,
+                  torrent.status != .failed else { return }
+            total += max(0, torrent.totalSize - torrent.downloadedBytes)
         }
     }
 
