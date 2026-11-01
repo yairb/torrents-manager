@@ -9,41 +9,44 @@ struct ContentView: View {
         @Bindable var navigationState = navigationState
         @Bindable var addTorrentViewModel = addTorrentViewModel
 
-        Group {
-            if let torrent = detailTorrent {
-                NavigationSplitView {
-                    SidebarView(selectedCategory: $navigationState.selectedCategory)
-                } content: {
-                    TorrentListView(category: navigationState.selectedCategory)
-                } detail: {
-                    TorrentDetailView(torrent: torrent)
-                }
-            } else {
-                NavigationSplitView {
-                    SidebarView(selectedCategory: $navigationState.selectedCategory)
-                } detail: {
-                    if navigationState.selectedCategory == .settings {
-                        SettingsView()
-                    } else {
+        VStack(spacing: 0) {
+            Group {
+                if let torrent = detailTorrent {
+                    NavigationSplitView {
+                        SidebarView(selectedCategory: $navigationState.selectedCategory)
+                    } content: {
                         TorrentListView(category: navigationState.selectedCategory)
+                    } detail: {
+                        TorrentDetailView(torrent: torrent)
+                    }
+                } else {
+                    NavigationSplitView {
+                        SidebarView(selectedCategory: $navigationState.selectedCategory)
+                    } detail: {
+                        if navigationState.selectedCategory == .settings {
+                            SettingsView()
+                        } else {
+                            TorrentListView(category: navigationState.selectedCategory)
+                        }
                     }
                 }
             }
-        }
-        // A safe-area inset rather than wrapping the whole thing in a VStack: that keeps the
-        // NavigationSplitView at the root of the window, which is what the unified toolbar and
-        // the sidebar toggle rely on, while the bar still spans every column.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            StatusBarView()
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    addTorrentViewModel.isShowingAddMagnetSheet = true
-                } label: {
-                    Label("Add Magnet", systemImage: "plus")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        addTorrentViewModel.isShowingAddMagnetSheet = true
+                    } label: {
+                        Label("Add Magnet", systemImage: "plus")
+                    }
                 }
             }
+
+            // A sibling in a VStack, not a `.safeAreaInset` on the split view. As an inset the
+            // bar was drawn over content that still believed it had the full window height:
+            // the split view never passed the inset down to the List inside it, so the last row
+            // stayed clipped behind the bar and could not be scrolled clear of it. Taking the
+            // height out of the split view's layout outright is what the List actually honours.
+            StatusBarView()
         }
         .sheet(isPresented: $addTorrentViewModel.isShowingAddMagnetSheet) {
             AddMagnetSheet()

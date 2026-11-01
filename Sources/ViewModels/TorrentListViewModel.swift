@@ -7,11 +7,15 @@ final class TorrentListViewModel {
     private(set) var torrents: [Torrent] = []
     var errorMessage: String?
 
-    /// Bumped whenever a torrent joins or leaves the list, and never for a mere progress tick.
-    /// Snapshots arrive several times a second with new speeds and byte counts; a view that only
-    /// cares about *which* torrents exist — the free-space bar, which re-measures the disk on
-    /// add and remove — would otherwise have no way to tell those apart.
-    private(set) var membershipRevision: Int = 0
+    /// Bumped whenever a torrent joins or leaves the list, or any torrent changes status —
+    /// added, removed, started, promoted out of the queue, paused, finished. Never for a mere
+    /// progress tick.
+    ///
+    /// These are the moments the amount of free disk space is about to move, or has just
+    /// finished moving, so the free-space bar re-measures on each of them. Snapshots otherwise
+    /// arrive several times a second carrying nothing but new speeds and byte counts, and
+    /// re-measuring on those would be pointless work.
+    private(set) var diskActivityRevision: Int = 0
     private let downloadManager: DownloadManager
     private var observationTask: Task<Void, Never>?
 
@@ -50,10 +54,12 @@ final class TorrentListViewModel {
             pendingRemovalIDs.formIntersection(present)
         }
 
-        // Compared as ordered ID lists rather than sets: the snapshot is always sorted by
+        // Compared as ordered lists rather than sets: the snapshot is always sorted by
         // `addedAt`, so an add and a remove landing in the same frame still shows up here.
-        if snapshot.map(\.id) != torrents.map(\.id) {
-            membershipRevision &+= 1
+        // `lazy` keeps this to a walk of the two arrays — it runs on every snapshot.
+        if !snapshot.lazy.map(\.id).elementsEqual(torrents.lazy.map(\.id))
+            || !snapshot.lazy.map(\.status).elementsEqual(torrents.lazy.map(\.status)) {
+            diskActivityRevision &+= 1
         }
 
         // `@Observable` does no equality check of its own, so assigning an identical snapshot
@@ -126,11 +132,25 @@ final class TorrentListViewModel {
     /// contributes nothing until it knows how big it is.
     var pendingDownloadBytes: Int64 {
         torrents.reduce(into: Int64(0)) { total, torrent in
-            guard !pendingRemovalIDs.contains(torrent.id),
-                  torrent.status != .done,
-                  torrent.status != .failed else { return }
+            guard Self.willStillWriteToDisk(torrent), !pendingRemovalIDs.contains(torrent.id) else { return }
             total += max(0, torrent.totalSize - torrent.downloadedBytes)
         }
+    }
+
+    /// Whether any unfinished torrent has yet to learn how big it is, which happens between
+    /// adding a magnet link and its metadata arriving. Those contribute nothing to
+    /// `pendingDownloadBytes` however large they turn out to be, so a projection made while one
+    /// is outstanding is an upper bound on the free space left, not a figure.
+    var hasUnsizedTorrents: Bool {
+        torrents.contains { torrent in
+            Self.willStillWriteToDisk(torrent)
+                && !pendingRemovalIDs.contains(torrent.id)
+                && torrent.totalSize == 0
+        }
+    }
+
+    private static func willStillWriteToDisk(_ torrent: Torrent) -> Bool {
+        torrent.status != .done && torrent.status != .failed
     }
 
     var hasDoneTorrents: Bool {

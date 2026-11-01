@@ -20,9 +20,7 @@ struct StatusBarView: View {
                 Text(projection.text)
                     .monospacedDigit()
                     .foregroundStyle(projection.isShortfall ? Color.red : Color.secondary)
-                    .help(projection.isShortfall
-                          ? "Everything still to be downloaded doesn't fit in the free space"
-                          : "What will be left once every unfinished torrent has downloaded")
+                    .help(projectionHelp)
                 Text("·")
             }
             Image(systemName: "internaldrive")
@@ -38,10 +36,10 @@ struct StatusBarView: View {
         .overlay(alignment: .top) { Divider() }
         .help("Free space on the volume holding \(downloadDirectory.path)")
         // Re-measured on a loop because the number drifts the whole time torrents are writing,
-        // and restarted outright whenever a torrent is added or removed — those are the moments
-        // the figure jumps, and waiting out the rest of a poll interval to show it would make
-        // the bar look stuck. Adding a torrent also moves the projection below, but that one is
-        // derived from the list directly and needs no measuring.
+        // and restarted outright whenever a torrent is added, removed, started or finished —
+        // those are the moments the figure jumps, and waiting out the rest of a poll interval
+        // to show it would make the bar look stuck. The projection below needs none of this:
+        // it is derived from the list directly, so it moves the instant the list does.
         .task(id: refreshTrigger) {
             while !Task.isCancelled {
                 let directory = downloadDirectory
@@ -53,11 +51,19 @@ struct StatusBarView: View {
 
     private struct RefreshTrigger: Equatable {
         var directory: URL
-        var membershipRevision: Int
+        var diskActivityRevision: Int
     }
 
     private var refreshTrigger: RefreshTrigger {
-        RefreshTrigger(directory: downloadDirectory, membershipRevision: listViewModel.membershipRevision)
+        RefreshTrigger(directory: downloadDirectory, diskActivityRevision: listViewModel.diskActivityRevision)
+    }
+
+    private var projectionHelp: String {
+        let base = projection?.isShortfall == true
+            ? "Everything still to be downloaded doesn't fit in the free space"
+            : "What will be left once every unfinished torrent has downloaded"
+        guard listViewModel.hasUnsizedTorrents else { return base }
+        return base + ". A torrent is still fetching its metadata, so its size isn't counted yet."
     }
 
     private var freeLabel: String {
@@ -78,14 +84,20 @@ struct StatusBarView: View {
         let pending = listViewModel.pendingDownloadBytes
         guard pending > 0 else { return nil }
 
+        // A torrent whose metadata hasn't arrived doesn't know its own size yet, so it is
+        // missing from `pending` entirely. Say so with a bound rather than quoting a figure
+        // that is about to drop further.
+        let bound = listViewModel.hasUnsizedTorrents
+
         let projected = availableBytes - pending
         guard projected >= 0 else {
-            return Projection(text: Self.byteFormatter.string(fromByteCount: -projected) + " short", isShortfall: true)
+            let short = Self.byteFormatter.string(fromByteCount: -projected)
+            return Projection(text: bound ? "at least \(short) short" : "\(short) short", isShortfall: true)
         }
 
         let text = Self.byteFormatter.string(fromByteCount: projected)
         guard text != Self.byteFormatter.string(fromByteCount: availableBytes) else { return nil }
-        return Projection(text: text + " after downloads", isShortfall: false)
+        return Projection(text: (bound ? "≤ " : "") + text + " after downloads", isShortfall: false)
     }
 
     // Decimal (`.file`) rather than the binary style the rest of the app uses for transfer
